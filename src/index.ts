@@ -89,6 +89,17 @@ app.use(helmet({
 app.use(cookieParser());
 
 // 4. CORS configuration - Using secure config module with OPTIONS preflight support
+
+// 4a. Strip any CORS headers injected upstream (e.g. by OpenLiteSpeed / a proxy layer)
+// BEFORE Express's own cors middleware runs. Without this, if the proxy also sets
+// Access-Control-Allow-Origin, the browser sees two comma-joined values and rejects
+// the response with: "Access-Control-Allow-Origin header contains multiple values".
+app.use((_req, res, next) => {
+  res.removeHeader('Access-Control-Allow-Origin');
+  res.removeHeader('Access-Control-Allow-Credentials');
+  next();
+});
+
 app.use(cors({
   origin: corsConfig.validateOrigin,
   credentials: true,
