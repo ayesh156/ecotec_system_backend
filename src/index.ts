@@ -53,7 +53,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 // Enables correct client IP detection for rate limiting
 // ===================================
 if (isProduction) {
-  app.set('trust proxy', true);
+  app.set('trust proxy', 1);
   console.log('🔒 Trust proxy enabled for production (reverse proxy detected)');
 }
 
@@ -98,15 +98,23 @@ function isOriginAllowed(origin?: string): boolean {
 }
 
 /**
- * Custom CORS Middleware Layer - Proxy Layer handles Access-Control-Allow-Origin
- * Express MUST NOT send Access-Control-Allow-Origin or Access-Control-Allow-Credentials 
- * here to avoid header duplication on OpenLiteSpeed proxy responses.
+ * Custom CORS Middleware - Handles dynamic origin validation and preflight requests.
+ * Sets appropriate CORS headers based on the request origin.
  */
 app.use((req, res, next) => {
-  // Inform downstream proxies/caches that response varies by Origin
+  const origin = req.headers.origin;
   res.setHeader('Vary', 'Origin');
 
-  // ── OPTIONS Preflight Handling ──
+  if (origin && isOriginAllowed(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', 'https://ecotec.ecosystemlk.app');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
+  }
+
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
