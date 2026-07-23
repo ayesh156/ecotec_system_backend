@@ -103,6 +103,10 @@ function isOriginAllowed(origin?: string): boolean {
  * Custom CORS Middleware Layer - Eliminates duplicate headers and preflight dropouts
  */
 app.use((req, res, next) => {
+  // 💥 Proxy / OpenLiteSpeed මගින් එකතු කරන Duplicate Headers මුලින්ම Clear කරයි
+  res.removeHeader('Access-Control-Allow-Origin');
+  res.removeHeader('Access-Control-Allow-Credentials');
+  
   const origin = req.headers.origin;
 
   // Inform downstream proxies/caches that response varies by Origin
