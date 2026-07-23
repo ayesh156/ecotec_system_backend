@@ -84,38 +84,23 @@ app.use(helmet({
 // 3. Cookie parser - Required for refresh token cookies
 app.use(cookieParser());
 
-// 4. CORS configuration - Custom CORS middleware
-function isOriginAllowed(origin: string | undefined): boolean {
-  if (!origin) return false;
-
-  // 1. Whitelist all variants of localhost and 127.0.0.1 (any port, http/https)
-  if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
-  if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
-
-  if (/^https:\/\/ecotec\.ecosystemlk\.app\/?$/i.test(origin)) return true;
-  if (/^https:\/\/api\.ecotec\.ecosystemlk\.app\/?$/i.test(origin)) return true;
-  if (/\.ecosystemlk\.app$/i.test(origin)) return true;
-  return false;
-}
-
+/**
+ * Custom CORS Middleware Layer - Handled by OpenLiteSpeed Proxy Layer
+ */
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-
+  // Inform downstream caches that response varies by Origin
   res.setHeader('Vary', 'Origin');
 
-  if (origin && isOriginAllowed(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', 'https://ecotec.ecosystemlk.app');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
-  }
-
+  // ── OPTIONS Preflight Handling ──
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
+    res.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+    );
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires',
+    );
     res.setHeader('Access-Control-Max-Age', '86400');
     return res.status(204).end();
   }
