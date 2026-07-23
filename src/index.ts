@@ -86,10 +86,7 @@ app.use(helmet({
 // 3. Cookie parser - Required for refresh token cookies
 app.use(cookieParser());
 
-// 4. CORS configuration - Proxy Layer handles Access-Control-Allow-Origin
-// To prevent duplicate headers when proxied through OpenLiteSpeed, we do NOT 
-// duplicate the Access-Control-Allow-Origin header here.
-
+// 4. CORS configuration - Custom CORS middleware
 function isOriginAllowed(origin?: string): boolean {
   if (!origin) return false;
   if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
@@ -101,19 +98,29 @@ function isOriginAllowed(origin?: string): boolean {
 }
 
 /**
- * Custom CORS Middleware Layer - Proxy Layer handles Access-Control-Allow-Origin
- * To prevent duplicate headers when proxied through OpenLiteSpeed, we do NOT 
- * duplicate the Access-Control-Allow-Origin header here.
+ * Custom CORS Middleware Layer - Clean Single Header Delivery
  */
 app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
   // Inform downstream proxies/caches that response varies by Origin
   res.setHeader('Vary', 'Origin');
+
+  if (origin && isOriginAllowed(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', 'https://ecotec.ecosystemlk.app');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
+  }
 
   // ── OPTIONS Preflight Handling ──
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
-    res.setHeader('Access-Control-Max-Age', '86400'); // 24 Hours cache
+    res.setHeader('Access-Control-Max-Age', '86400');
     return res.status(204).end();
   }
 
