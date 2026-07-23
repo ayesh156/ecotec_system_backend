@@ -97,22 +97,11 @@ function isOriginAllowed(origin: string | undefined): boolean {
   return false;
 }
 
+// 4. CORS configuration - Express DOES NOT send CORS headers
+// OpenLiteSpeed Proxy Layer handles the Access-Control-Allow-Origin header exclusively.
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
+  res.setHeader('Vary', 'Origin');
 
-  // Header එක දැනටමත් සෙට් වෙලා නැත්නම් විතරක් සෙට් කරන්න
-  if (!res.getHeader('Access-Control-Allow-Origin')) {
-    if (origin) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    } else {
-      res.setHeader('Access-Control-Allow-Origin', 'https://ecotec.ecosystemlk.app');
-    }
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
-    res.setHeader('Vary', 'Origin');
-  }
-
-  // Preflight OPTIONS requests handle කිරීම
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
