@@ -86,8 +86,9 @@ app.use(helmet({
 // 3. Cookie parser - Required for refresh token cookies
 app.use(cookieParser());
 
-// 4. CORS configuration - Bulletproof Dynamic CORS & Preflight Configuration
-// Replaces external cors package with native Express middleware for full control.
+// 4. CORS configuration - Proxy Layer handles Access-Control-Allow-Origin
+// To prevent duplicate headers when proxied through OpenLiteSpeed, we do NOT 
+// duplicate the Access-Control-Allow-Origin header here.
 
 function isOriginAllowed(origin?: string): boolean {
   if (!origin) return false;
@@ -100,28 +101,13 @@ function isOriginAllowed(origin?: string): boolean {
 }
 
 /**
- * Custom CORS Middleware Layer - Eliminates duplicate headers and preflight dropouts
+ * Custom CORS Middleware Layer - Proxy Layer handles Access-Control-Allow-Origin
+ * To prevent duplicate headers when proxied through OpenLiteSpeed, we do NOT 
+ * duplicate the Access-Control-Allow-Origin header here.
  */
 app.use((req, res, next) => {
-  // 💥 Proxy / OpenLiteSpeed මගින් එකතු කරන Duplicate Headers මුලින්ම Clear කරයි
-  res.removeHeader('Access-Control-Allow-Origin');
-  res.removeHeader('Access-Control-Allow-Credentials');
-  
-  const origin = req.headers.origin;
-
   // Inform downstream proxies/caches that response varies by Origin
   res.setHeader('Vary', 'Origin');
-
-  if (origin && isOriginAllowed(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
-  } else {
-    // Proxy handshakes fallback
-    res.setHeader('Access-Control-Allow-Origin', 'https://ecotec.ecosystemlk.app');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
-  }
 
   // ── OPTIONS Preflight Handling ──
   if (req.method === 'OPTIONS') {
