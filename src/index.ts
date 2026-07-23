@@ -52,10 +52,8 @@ const isProduction = process.env.NODE_ENV === 'production';
 // TRUST PROXY - Required for Render.com & Contabo (behind reverse proxy)
 // Enables correct client IP detection for rate limiting
 // ===================================
-if (isProduction) {
-  app.set('trust proxy', 1);
-  console.log('🔒 Trust proxy enabled for production (reverse proxy detected)');
-}
+app.set('trust proxy', 1);
+console.log(`🔒 Trust proxy set to 1 (single reverse proxy hop trusted, ${isProduction ? 'production' : 'development'})`);
 
 // ===================================
 // SECURITY MIDDLEWARE - Order matters!
@@ -98,27 +96,36 @@ function isOriginAllowed(origin?: string): boolean {
 }
 
 /**
+ * Sets a header value cleanly, removing any prior value first (whether set by
+ * an earlier middleware, an upstream proxy that leaked a header through, or
+ * this same middleware firing more than once on the response). setHeader()
+ * alone normally overwrites, but if anything upstream used append() or if this
+ * middleware is invoked twice on the same response, values can accumulate into
+ * a comma-separated duplicate (e.g. "origin, origin"). removeHeader() first
+ * guarantees a single clean value every time.
+ */
+function setHeaderClean(res: express.Response, name: string, value: string): void {
+  res.removeHeader(name);
+  res.setHeader(name, value);
+}
+
+/**
  * Custom CORS Middleware - Handles dynamic origin validation and preflight requests.
  * Sets appropriate CORS headers based on the request origin.
  */
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  res.setHeader('Vary', 'Origin');
+  setHeaderClean(res, 'Vary', 'Origin');
 
-  if (origin && isOriginAllowed(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', 'https://ecotec.ecosystemlk.app');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
-  }
+  const allowedOrigin = origin && isOriginAllowed(origin) ? origin : 'https://ecotec.ecosystemlk.app';
+  setHeaderClean(res, 'Access-Control-Allow-Origin', allowedOrigin);
+  setHeaderClean(res, 'Access-Control-Allow-Credentials', 'true');
+  setHeaderClean(res, 'Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
 
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
-    res.setHeader('Access-Control-Max-Age', '86400');
+    setHeaderClean(res, 'Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    setHeaderClean(res, 'Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
+    setHeaderClean(res, 'Access-Control-Max-Age', '86400');
     return res.status(204).end();
   }
 
