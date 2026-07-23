@@ -1116,6 +1116,7 @@ const startServer = async () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
     console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`📡 API available at http://localhost:${PORT}${API_PREFIX}`);
+    console.log(`📡 API Test URL at http://localhost:${PORT}/api/test`);
   });
 
   // Then connect to DB (requests are held by the cold-start gate middleware)
