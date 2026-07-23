@@ -7,7 +7,7 @@ import { Router, Request } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { protect, requireShop } from '../middleware/auth';
+import { protect } from '../middleware/auth';
 import { sensitiveRateLimiter } from '../middleware/rateLimiter';
 
 // Extend Request interface to include multer file
@@ -79,7 +79,7 @@ const uploadLogoMulter = multer({
 });
 
 // Upload product image
-router.post('/product-image', protect, requireShop, sensitiveRateLimiter, upload.single('image'), async (req: MulterRequest, res) => {
+router.post('/product-image', protect, sensitiveRateLimiter, upload.single('image'), async (req: MulterRequest, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -111,7 +111,7 @@ router.post('/product-image', protect, requireShop, sensitiveRateLimiter, upload
 });
 
 // Upload shop logo
-router.post('/shop-logo', protect, requireShop, sensitiveRateLimiter, uploadLogoMulter.single('image'), async (req: MulterRequest, res) => {
+router.post('/shop-logo', protect, sensitiveRateLimiter, uploadLogoMulter.single('image'), async (req: MulterRequest, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -143,7 +143,7 @@ router.post('/shop-logo', protect, requireShop, sensitiveRateLimiter, uploadLogo
 });
 
 // Delete uploaded image
-router.delete('/product-image/:filename', protect, requireShop, sensitiveRateLimiter, async (req, res) => {
+router.delete('/product-image/:filename', protect, sensitiveRateLimiter, async (req, res) => {
   try {
     const filename = req.params.filename;
     const filePath = path.join(uploadsDir, filename);

@@ -4,22 +4,9 @@ import { AppError } from '../middleware/errorHandler';
 import { Prisma, InvoiceStatus, PaymentMethod, SalesChannel, ReminderType } from '@prisma/client';
 import { sendInvoiceEmail, sendInvoiceWithPDF } from '../services/emailService';
 import { generateInvoicePDF, InvoicePDFData } from '../services/pdfService';
+import { getShopId } from '../lib/shopId';
 // Import centralized type definitions
 import '../types/express';
-
-// Helper function to get effective shopId for SuperAdmin shop viewing
-const getEffectiveShopId = (req: Request & { user?: { id: string; role?: string; shopId: string | null } }): string | null => {
-  const { shopId: queryShopId } = req.query;
-  const userRole = req.user?.role;
-  const userShopId = req.user?.shopId;
-  
-  // SuperAdmin can view any shop by passing shopId query parameter
-  if (userRole === 'SUPER_ADMIN' && queryShopId && typeof queryShopId === 'string') {
-    return queryShopId;
-  }
-  
-  return userShopId || null;
-};
 
 /**
  * World-Class Invoice Number Generation System
@@ -113,19 +100,14 @@ const calculateInvoiceStatus = (total: number, paidAmount: number): InvoiceStatu
 
 // @desc    Get all invoices with filtering and pagination
 // @route   GET /api/v1/invoices
-// @access  Private (requires authentication and shop access)
+// @access  Private (requires authentication)
 export const getAllInvoices = async (
-  req: Request & { user?: { id: string; role?: string; shopId: string | null } },
+  req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    // 🔒 Get effective shopId (supports SuperAdmin shop viewing)
-    const shopId = getEffectiveShopId(req);
-    
-    if (!shopId) {
-      throw new AppError('User is not associated with any shop', 403);
-    }
+    const shopId = getShopId();
 
     const {
       page = '1',
@@ -308,12 +290,9 @@ export const getInvoiceById = async (
       throw new AppError(`Invoice not found with ID or number: ${id}`, 404);
     }
 
-    // 🔐 SECURITY: Verify invoice belongs to user's shop or SuperAdmin viewing shop
-    const effectiveShopId = getEffectiveShopId(req as Request & { user?: { id: string; role?: string; shopId: string | null } });
-    if (!effectiveShopId) {
-      throw new AppError('User is not associated with any shop', 403);
-    }
-    if (invoice.shopId !== effectiveShopId) {
+    // 🔐 SECURITY: Verify invoice belongs to the default shop
+    const shopId = getShopId();
+    if (invoice.shopId !== shopId) {
       throw new AppError('You do not have permission to access this invoice', 403);
     }
 
@@ -975,8 +954,7 @@ export const getInvoiceStats = async (
   next: NextFunction
 ) => {
   try {
-    // 🔐 SECURITY: Filter stats by user's shop (or SuperAdmin viewing shop)
-    const shopId = getEffectiveShopId(req as Request & { user?: { id: string; role?: string; shopId: string | null } });
+    const shopId = getShopId();
     if (!shopId) {
       throw new AppError('User is not associated with any shop', 403);
     }
@@ -1087,12 +1065,9 @@ export const getInvoiceReminders = async (
       throw new AppError('Invoice not found', 404);
     }
 
-    // 🔐 SECURITY: Verify invoice belongs to user's shop (or SuperAdmin viewing shop)
-    const effectiveShopId = getEffectiveShopId(req as Request & { user?: { id: string; role?: string; shopId: string | null } });
-    if (!effectiveShopId) {
-      throw new AppError('User is not associated with any shop', 403);
-    }
-    if (invoice.shopId !== effectiveShopId) {
+    // 🔐 SECURITY: Verify invoice belongs to default shop
+    const shopId = getShopId();
+    if (invoice.shopId !== shopId) {
       throw new AppError('You do not have permission to access reminders for this invoice', 403);
     }
 
@@ -1203,15 +1178,7 @@ export const getInvoiceItemHistory = async (
 ) => {
   try {
     const { id } = req.params;
-    const userRole = (req.user as any)?.role;
-    const effectiveShopId = getEffectiveShopId(req);
-    
-    // SUPER_ADMIN can access any invoice, regular users need a shopId
-    const isSuperAdmin = userRole === 'SUPER_ADMIN';
-    
-    if (!isSuperAdmin && !effectiveShopId) {
-      throw new AppError('User is not associated with any shop', 403);
-    }
+    const shopId = getShopId();
 
     // Try to find invoice by ID first, then by invoice number
     let invoice = await prisma.invoice.findUnique({
@@ -1232,8 +1199,8 @@ export const getInvoiceItemHistory = async (
       throw new AppError('Invoice not found', 404);
     }
 
-    // SUPER_ADMIN can view any invoice, regular users must own the invoice
-    if (!isSuperAdmin && invoice.shopId !== effectiveShopId) {
+    // Verify invoice belongs to default shop
+    if (invoice.shopId !== shopId) {
       throw new AppError('You do not have permission to view this invoice history', 403);
     }
 
@@ -1266,15 +1233,7 @@ export const createInvoiceItemHistory = async (
 ) => {
   try {
     const { id } = req.params;
-    const userRole = (req.user as any)?.role;
-    const effectiveShopId = getEffectiveShopId(req);
-    
-    // SUPER_ADMIN can access any invoice, regular users need a shopId
-    const isSuperAdmin = userRole === 'SUPER_ADMIN';
-    
-    if (!isSuperAdmin && !effectiveShopId) {
-      throw new AppError('User is not associated with any shop', 403);
-    }
+    const shopId = getShopId();
 
     // Request body can be a single change or array of changes
     const changes = Array.isArray(req.body) ? req.body : [req.body];
@@ -1298,8 +1257,8 @@ export const createInvoiceItemHistory = async (
       throw new AppError('Invoice not found', 404);
     }
 
-    // SUPER_ADMIN can modify any invoice, regular users must own the invoice
-    if (!isSuperAdmin && invoice.shopId !== effectiveShopId) {
+    // Verify invoice belongs to default shop
+    if (invoice.shopId !== shopId) {
       throw new AppError('You do not have permission to modify this invoice history', 403);
     }
 
@@ -1368,13 +1327,13 @@ export const createInvoiceItemHistory = async (
  * Updates emailSent and emailSentAt fields in the database.
  */
 export const sendInvoiceViaEmail = async (
-  req: Request & { user?: { id: string; role?: string; shopId: string | null } },
+  req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
     const { id } = req.params;
-    const shopId = getEffectiveShopId(req);
+    const shopId = getShopId();
 
     if (!shopId) {
       throw new AppError('Shop context required to send invoice email', 403);
@@ -1499,13 +1458,13 @@ export const sendInvoiceViaEmail = async (
  * Returns the email sent status for an invoice
  */
 export const getInvoiceEmailStatus = async (
-  req: Request & { user?: { id: string; role?: string; shopId: string | null } },
+  req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
     const { id } = req.params;
-    const shopId = getEffectiveShopId(req);
+    const shopId = getShopId();
 
     if (!shopId) {
       throw new AppError('Shop context required', 403);
@@ -1561,13 +1520,13 @@ export const getInvoiceEmailStatus = async (
  * Generates and returns a PDF file of the invoice
  */
 export const downloadInvoicePDF = async (
-  req: Request & { user?: { id: string; role?: string; shopId: string | null } },
+  req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
     const { id } = req.params;
-    const shopId = getEffectiveShopId(req);
+    const shopId = getShopId();
 
     if (!shopId) {
       throw new AppError('Shop context required to download invoice PDF', 403);
@@ -1657,14 +1616,14 @@ export const downloadInvoicePDF = async (
  * Updates emailSent and emailSentAt fields in the database.
  */
 export const sendInvoiceEmailWithPDF = async (
-  req: Request & { user?: { id: string; role?: string; shopId: string | null } },
+  req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
     const { id } = req.params;
     const { pdfBase64, includeAttachment } = req.body;
-    const shopId = getEffectiveShopId(req);
+    const shopId = getShopId();
 
     if (!shopId) {
       throw new AppError('Shop context required to send invoice email', 403);

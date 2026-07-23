@@ -1,91 +1,136 @@
+/**
+ * Shop Routes - Simplified for Single-Shop mode
+ * Shop profile settings and local user management only.
+ * Multi-shop registration, listing, and super-admin endpoints are removed.
+ */
+
 import { Router } from 'express';
 import {
-  registerShop,
-  getShopBySlug,
   getShopById,
   updateShop,
   getShopUsers,
   addShopUser,
   updateUserRole,
   getShopStats,
-  listAllShops,
-  toggleShopStatus,
-  createShopForUser,
   getShopSections,
   updateShopSections,
   debugShopSections,
 } from '../controllers/shop.controller';
-import { protect, authorize, requireShop, requireShopAccess } from '../middleware/auth';
-import { shopRegistrationRateLimiter, sensitiveRateLimiter } from '../middleware/rateLimiter';
-import { validateShopRegistration } from '../middleware/validation';
+import { protect, authorize } from '../middleware/auth';
+import { getShopId } from '../lib/shopId';
+import { sensitiveRateLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 
 // ==========================================
-// PUBLIC ROUTES (with rate limiting)
+// AUTHENTICATED ROUTES
 // ==========================================
 
-// Register a new shop with admin user
-// 🔒 Rate limited: 3 per day per IP
-router.post('/register', shopRegistrationRateLimiter, validateShopRegistration, registerShop);
+// Get the default shop by ID
+router.get('/current', protect, async (req, res, next) => {
+  try {
+    const shopId = getShopId();
+    req.params.id = shopId;
+    return getShopById(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
 
-// Get shop by slug (public info - limited data exposure)
-router.get('/slug/:slug', getShopBySlug);
-
-// ==========================================
-// CREATE SHOP FOR EXISTING USER (Protected - for users without a shop)
-// ==========================================
-router.post('/create-for-user', protect, sensitiveRateLimiter, createShopForUser);
-
-// ==========================================
-// AUTHENTICATED ROUTES (require shop access)
-// ==========================================
-
-// Get shop by ID - requires auth and shop access validation
-router.get('/:id', protect, requireShopAccess, getShopById);
-
-// Update shop settings (admin or super admin)
-router.put('/:id', protect, requireShopAccess, authorize('ADMIN', 'SUPER_ADMIN'), sensitiveRateLimiter, updateShop);
+// Update shop settings (admin only)
+router.put('/current', protect, authorize('ADMIN'), sensitiveRateLimiter, async (req, res, next) => {
+  try {
+    const shopId = getShopId();
+    req.params.id = shopId;
+    return updateShop(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Get shop statistics
-router.get('/:id/stats', protect, requireShopAccess, authorize('ADMIN', 'MANAGER', 'SUPER_ADMIN'), getShopStats);
+router.get('/current/stats', protect, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const shopId = getShopId();
+    req.params.id = shopId;
+    return getShopStats(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // ==========================================
 // USER MANAGEMENT (admin only)
 // ==========================================
 
 // Get all users in shop
-router.get('/:id/users', protect, requireShopAccess, authorize('ADMIN', 'SUPER_ADMIN'), getShopUsers);
+router.get('/current/users', protect, authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const shopId = getShopId();
+    req.params.id = shopId;
+    return getShopUsers(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Add new user to shop
-router.post('/:id/users', protect, requireShopAccess, authorize('ADMIN', 'SUPER_ADMIN'), sensitiveRateLimiter, addShopUser);
+router.post('/current/users', protect, authorize('ADMIN'), sensitiveRateLimiter, async (req, res, next) => {
+  try {
+    const shopId = getShopId();
+    req.params.id = shopId;
+    return addShopUser(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Update user role/status
-router.put('/:id/users/:userId', protect, requireShopAccess, authorize('ADMIN', 'SUPER_ADMIN'), sensitiveRateLimiter, updateUserRole);
+router.put('/current/users/:userId', protect, authorize('ADMIN'), sensitiveRateLimiter, async (req, res, next) => {
+  try {
+    const shopId = getShopId();
+    req.params.id = shopId;
+    return updateUserRole(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // ==========================================
-// SECTION VISIBILITY (shop access or super admin)
+// SECTION VISIBILITY
 // ==========================================
 
-// Get hidden sections for a shop (for navigation filtering)
-router.get('/:id/sections', protect, requireShopAccess, getShopSections);
+// Get hidden sections
+router.get('/current/sections', protect, async (req, res, next) => {
+  try {
+    const shopId = getShopId();
+    req.params.id = shopId;
+    return getShopSections(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
 
-// Update hidden sections
-// SuperAdmin can update hiddenSections (affects ADMIN + USER)
-// Shop ADMIN can update adminHiddenSections (affects USER only)
-router.put('/:id/sections', protect, requireShopAccess, authorize('ADMIN', 'SUPER_ADMIN'), sensitiveRateLimiter, updateShopSections);
+// Update hidden sections (Admin)
+router.put('/current/sections', protect, authorize('ADMIN'), sensitiveRateLimiter, async (req, res, next) => {
+  try {
+    const shopId = getShopId();
+    req.params.id = shopId;
+    return updateShopSections(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
 
-// DEBUG: Shop sections diagnostic endpoint
-router.get('/:id/debug/sections', protect, requireShopAccess, debugShopSections);
-
-// ==========================================
-// SUPER ADMIN ROUTES (platform-wide)
-// ==========================================
-
-// List all shops (super admin only)
-router.get('/', protect, authorize('SUPER_ADMIN'), listAllShops);
-
-// Toggle shop active status
-router.patch('/:id/toggle-status', protect, authorize('SUPER_ADMIN'), sensitiveRateLimiter, toggleShopStatus);
+// DEBUG: Shop sections diagnostic
+router.get('/current/debug/sections', protect, authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const shopId = getShopId();
+    req.params.id = shopId;
+    return debugShopSections(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
 
 export default router;

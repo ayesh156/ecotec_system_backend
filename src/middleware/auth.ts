@@ -83,7 +83,6 @@ export const protect = async (
 
 /**
  * Optional auth middleware - Attaches user if token is valid, but doesn't require it
- * Useful for routes that work differently for authenticated vs anonymous users
  */
 export const optionalAuth = async (
   req: AuthRequest,
@@ -131,40 +130,4 @@ export const authorize = (...roles: string[]) => {
     }
     next();
   };
-};
-
-// Middleware to ensure user belongs to a shop (or SUPER_ADMIN with shopId query param)
-export const requireShop = (req: AuthRequest, _res: Response, next: NextFunction) => {
-  // SUPER_ADMIN can access any shop via query parameter
-  if (req.user?.role === 'SUPER_ADMIN') {
-    const viewingShopId = req.query.shopId as string | undefined;
-    if (viewingShopId) {
-      // Set the shopId on the user object for use in controllers
-      req.user.shopId = viewingShopId;
-      return next();
-    }
-    // SUPER_ADMIN without shopId query param - they don't belong to a shop
-    // Allow them to continue but shopId will be null
-    return next();
-  }
-  
-  if (!req.user?.shopId) {
-    return next(new AppError('User is not associated with any shop', 403));
-  }
-  next();
-};
-
-// Middleware to verify user has access to the specified shop
-export const requireShopAccess = (req: AuthRequest, _res: Response, next: NextFunction) => {
-  const shopId = req.params.id || req.params.shopId || req.body.shopId;
-  
-  // SUPER_ADMIN can access any shop
-  if (req.user?.role === 'SUPER_ADMIN') {
-    return next();
-  }
-  
-  if (!req.user?.shopId || req.user.shopId !== shopId) {
-    return next(new AppError('Not authorized to access this shop', 403));
-  }
-  next();
 };

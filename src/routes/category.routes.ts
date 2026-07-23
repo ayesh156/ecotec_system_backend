@@ -3,23 +3,24 @@
  * Category management for product organization
  * 
  * Features:
- * - Full CRUD with shop isolation (multi-tenant)
+ * - Full CRUD with shop isolation (single-shop mode)
  * - Search and pagination
  * - Product count tracking
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { prisma } from '../lib/prisma';
-import { protect, requireShop, authorize } from '../middleware/auth';
+import { protect, authorize } from '../middleware/auth';
 import type { AuthRequest } from '../middleware/auth';
 import { body } from 'express-validator';
 import { handleValidationErrors } from '../middleware/validation';
 import { sensitiveRateLimiter } from '../middleware/rateLimiter';
+import { getShopId } from '../lib/shopId';
 
 const router = Router();
 
-// 🔒 All category routes require authentication and shop
-router.use(protect, requireShop);
+// 🔒 All category routes require authentication
+router.use(protect);
 
 // Validation middleware for category
 const validateCategory = [
@@ -41,88 +42,12 @@ const validateCategory = [
   handleValidationErrors,
 ];
 
-// Helper function to get effective shopId for SuperAdmin shop viewing
-const getEffectiveShopId = (authReq: AuthRequest): string | null => {
-  const { shopId: queryShopId } = authReq.query;
-  const userRole = authReq.user?.role;
-  const userShopId = authReq.user?.shopId;
-  
-  // SuperAdmin can view any shop by passing shopId query parameter
-  if (userRole === 'SUPER_ADMIN' && queryShopId && typeof queryShopId === 'string') {
-    return queryShopId;
-  }
-  
-  return userShopId || null;
-};
-
-// ==========================================
-// GET /categories/suggestions - Get global category suggestions
-// Returns unique category names from ALL shops for suggestions when creating
-// ==========================================
-router.get('/suggestions', async (req, res, next) => {
-  try {
-    const authReq = req as AuthRequest;
-    const shopId = authReq.user?.shopId;
-    const { search } = req.query;
-
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
-
-    // Build where clause for search
-    const where: any = {};
-    if (search && typeof search === 'string') {
-      where.name = { contains: search, mode: 'insensitive' };
-    }
-
-    // Get all unique category names from all shops (for suggestions)
-    const allCategories = await prisma.category.findMany({
-      where,
-      select: {
-        name: true,
-        description: true,
-        image: true,
-        shopId: true,
-      },
-      distinct: ['name'],
-      orderBy: { name: 'asc' },
-      take: 20,
-    });
-
-    // Filter out categories that already exist in the user's shop
-    const existingInShop = await prisma.category.findMany({
-      where: { shopId },
-      select: { name: true },
-    });
-    const existingNames = new Set(existingInShop.map(c => c.name.toLowerCase()));
-
-    // Return suggestions with flag indicating if exists in user's shop
-    const suggestions = allCategories.map(cat => ({
-      name: cat.name,
-      description: cat.description,
-      image: cat.image,
-      existsInYourShop: existingNames.has(cat.name.toLowerCase()),
-      isFromOtherShop: cat.shopId !== shopId,
-    }));
-
-    res.json({ success: true, data: suggestions });
-  } catch (error) {
-    next(error);
-  }
-});
-
 // ==========================================
 // GET /categories - List all categories
 // ==========================================
 router.get('/', async (req, res, next) => {
   try {
-    const authReq = req as AuthRequest;
-    const shopId = getEffectiveShopId(authReq);
-    
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
-
+    const shopId = getShopId();
     const { search, page = '1', limit = '50' } = req.query;
 
     // Build where clause
@@ -173,13 +98,8 @@ router.get('/', async (req, res, next) => {
 // ==========================================
 router.get('/:id', async (req, res, next) => {
   try {
-    const authReq = req as AuthRequest;
-    const shopId = getEffectiveShopId(authReq);
+    const shopId = getShopId();
     const { id } = req.params;
-
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
 
     const category = await prisma.category.findUnique({
       where: { id },
@@ -209,13 +129,7 @@ router.get('/:id', async (req, res, next) => {
 // ==========================================
 router.post('/', sensitiveRateLimiter, validateCategory, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const authReq = req as AuthRequest;
-    const shopId = authReq.user?.shopId;
-    
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
-
+    const shopId = getShopId();
     const { name, description, image, isActive } = req.body;
 
     // Check for duplicate name in same shop
@@ -255,13 +169,8 @@ router.post('/', sensitiveRateLimiter, validateCategory, async (req: Request, re
 // ==========================================
 router.put('/:id', validateCategory, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const authReq = req as AuthRequest;
-    const shopId = authReq.user?.shopId;
+    const shopId = getShopId();
     const { id } = req.params;
-
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
 
     const existing = await prisma.category.findUnique({ where: { id } });
     
@@ -309,13 +218,8 @@ router.put('/:id', validateCategory, async (req: Request, res: Response, next: N
 // ==========================================
 router.delete('/:id', authorize('ADMIN'), async (req, res, next) => {
   try {
-    const authReq = req as AuthRequest;
-    const shopId = authReq.user?.shopId;
+    const shopId = getShopId();
     const { id } = req.params;
-
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
 
     const existing = await prisma.category.findUnique({
       where: { id },

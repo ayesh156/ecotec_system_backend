@@ -1,37 +1,16 @@
 import { Response, NextFunction } from 'express';
 import { prisma } from '../lib/prisma';
 import type { AuthRequest } from '../types/express';
-
-// Helper function to get effective shopId for SuperAdmin shop viewing
-const getEffectiveShopId = (req: AuthRequest): string | null => {
-  const { shopId: queryShopId } = req.query;
-  const userRole = req.user?.role;
-  const userShopId = req.user?.shopId;
-  
-  // SuperAdmin can view any shop by passing shopId query parameter
-  if (userRole === 'SUPER_ADMIN' && queryShopId && typeof queryShopId === 'string') {
-    return queryShopId;
-  }
-  
-  return userShopId || null;
-};
+import { getShopId } from '../lib/shopId';
 
 // Create a new supplier
 export const createSupplier = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const shopId = getEffectiveShopId(req);
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
-
+    const shopId = getShopId();
     const { name, contactPerson, email, phone, address } = req.body;
 
-    // Check if supplier with same name exists in this shop
     const existing = await prisma.supplier.findFirst({
-      where: {
-        shopId,
-        name: { equals: name }
-      }
+      where: { shopId, name: { equals: name } }
     });
 
     if (existing) {
@@ -39,14 +18,7 @@ export const createSupplier = async (req: AuthRequest, res: Response, next: Next
     }
 
     const supplier = await prisma.supplier.create({
-      data: {
-        shopId,
-        name,
-        contactPerson,
-        email,
-        phone,
-        address
-      }
+      data: { shopId, name, contactPerson, email, phone, address }
     });
 
     res.status(201).json({ success: true, data: supplier });
@@ -58,45 +30,33 @@ export const createSupplier = async (req: AuthRequest, res: Response, next: Next
 // Get all suppliers for the shop
 export const getSuppliers = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const shopId = getEffectiveShopId(req);
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
-
+    const shopId = getShopId();
     const suppliers = await prisma.supplier.findMany({
       where: { shopId, isActive: true },
       orderBy: { name: 'asc' },
       include: {
         grns: {
-          where: {
-            status: { in: ['COMPLETED', 'PENDING'] } // Only count completed/pending GRNs
-          },
-          select: {
-            totalAmount: true,
-            createdAt: true
-          }
+          where: { status: { in: ['COMPLETED', 'PENDING'] } },
+          select: { totalAmount: true, createdAt: true }
         },
-        _count: {
-          select: { grns: true }
-        }
+        _count: { select: { grns: true } }
       }
     });
 
-    // Calculate total purchases and add to response
     const suppliersWithTotals = suppliers.map(supplier => {
       const totalPurchases = supplier.grns.reduce((sum, grn) => sum + (grn.totalAmount || 0), 0);
-      const lastOrder = supplier.grns.length > 0 
-        ? supplier.grns.reduce((latest, grn) => 
+      const lastOrder = supplier.grns.length > 0
+        ? supplier.grns.reduce((latest, grn) =>
             new Date(grn.createdAt) > new Date(latest.createdAt) ? grn : latest
           ).createdAt
         : null;
-      
+
       return {
         ...supplier,
         totalPurchases,
         totalOrders: supplier._count.grns,
         lastOrder,
-        grns: undefined // Remove grns array from response to keep it light
+        grns: undefined
       };
     });
 
@@ -109,26 +69,16 @@ export const getSuppliers = async (req: AuthRequest, res: Response, next: NextFu
 // Get single supplier
 export const getSupplierById = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const shopId = getEffectiveShopId(req);
+    const shopId = getShopId();
     const { id } = req.params;
 
     const supplier = await prisma.supplier.findUnique({
       where: { id },
-      include: {
-        grns: {
-          orderBy: { createdAt: 'desc' },
-          take: 5
-        }
-      }
+      include: { grns: { orderBy: { createdAt: 'desc' }, take: 5 } }
     });
 
-    if (!supplier) {
-      return res.status(404).json({ success: false, message: 'Supplier not found' });
-    }
-
-    if (supplier.shopId !== shopId) {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
+    if (!supplier) return res.status(404).json({ success: false, message: 'Supplier not found' });
+    if (supplier.shopId !== shopId) return res.status(403).json({ success: false, message: 'Access denied' });
 
     res.json({ success: true, data: supplier });
   } catch (error) {
@@ -139,32 +89,17 @@ export const getSupplierById = async (req: AuthRequest, res: Response, next: Nex
 // Update supplier
 export const updateSupplier = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const shopId = getEffectiveShopId(req);
+    const shopId = getShopId();
     const { id } = req.params;
     const { name, contactPerson, email, phone, address, isActive } = req.body;
 
-    const existing = await prisma.supplier.findUnique({
-      where: { id }
-    });
-
-    if (!existing) {
-      return res.status(404).json({ success: false, message: 'Supplier not found' });
-    }
-
-    if (existing.shopId !== shopId) {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
+    const existing = await prisma.supplier.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ success: false, message: 'Supplier not found' });
+    if (existing.shopId !== shopId) return res.status(403).json({ success: false, message: 'Access denied' });
 
     const supplier = await prisma.supplier.update({
       where: { id },
-      data: {
-        name,
-        contactPerson,
-        email,
-        phone,
-        address,
-        isActive
-      }
+      data: { name, contactPerson, email, phone, address, isActive }
     });
 
     res.json({ success: true, data: supplier });
@@ -173,11 +108,10 @@ export const updateSupplier = async (req: AuthRequest, res: Response, next: Next
   }
 };
 
-// Delete supplier (soft delete usually better, but if no GRNs, maybe hard delete?)
-// For now, let's allow delete if no GRNs, otherwise soft delete (isActive = false)
+// Delete supplier (hard delete if no GRNs, soft delete otherwise)
 export const deleteSupplier = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const shopId = getEffectiveShopId(req);
+    const shopId = getShopId();
     const { id } = req.params;
 
     const existing = await prisma.supplier.findUnique({
@@ -185,28 +119,15 @@ export const deleteSupplier = async (req: AuthRequest, res: Response, next: Next
       include: { _count: { select: { grns: true } } }
     });
 
-    if (!existing) {
-      return res.status(404).json({ success: false, message: 'Supplier not found' });
-    }
-
-    if (existing.shopId !== shopId) {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
+    if (!existing) return res.status(404).json({ success: false, message: 'Supplier not found' });
+    if (existing.shopId !== shopId) return res.status(403).json({ success: false, message: 'Access denied' });
 
     if (existing._count.grns > 0) {
-      // Soft delete
-      await prisma.supplier.update({
-        where: { id },
-        data: { isActive: false }
-      });
+      await prisma.supplier.update({ where: { id }, data: { isActive: false } });
       return res.json({ success: true, message: 'Supplier deactivated (has existing GRNs)' });
     }
 
-    // Hard delete
-    await prisma.supplier.delete({
-      where: { id }
-    });
-
+    await prisma.supplier.delete({ where: { id } });
     res.json({ success: true, message: 'Supplier deleted successfully' });
   } catch (error) {
     next(error);

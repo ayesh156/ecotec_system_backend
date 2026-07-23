@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
+import compression from 'compression';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -39,18 +40,18 @@ import productRoutes from './routes/product.routes';
 import categoryRoutes from './routes/category.routes';
 import brandRoutes from './routes/brand.routes';
 import shopRoutes from './routes/shop.routes';
-import adminRoutes from './routes/admin.routes';
 import shopAdminRoutes from './routes/shopAdmin.routes';
 import supplierRoutes from './routes/supplier.routes';
 import grnRoutes from './routes/grn.routes';
 import uploadRoutes from './routes/upload.routes';
+import publicRoutes from './routes/public.routes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const isProduction = process.env.NODE_ENV === 'production';
 
 // ===================================
-// TRUST PROXY - Required for Render.com (behind reverse proxy)
+// TRUST PROXY - Required for Render.com & Contabo (behind reverse proxy)
 // Enables correct client IP detection for rate limiting
 // ===================================
 if (isProduction) {
@@ -87,7 +88,7 @@ app.use(helmet({
 // 3. Cookie parser - Required for refresh token cookies
 app.use(cookieParser());
 
-// 4. CORS configuration - Using secure config module
+// 4. CORS configuration - Using secure config module with OPTIONS preflight support
 app.use(cors({
   origin: corsConfig.validateOrigin,
   credentials: true,
@@ -97,17 +98,21 @@ app.use(cors({
   maxAge: 86400, // Cache preflight for 24 hours
 }));
 
-// 5. Body parsing with size limits
+// 5. Gzip Compression - Compresses responses > 1 KB
+// Must be registered BEFORE body parsers and route handlers
+app.use(compression({ threshold: 1024 }));
+
+// 6. Body parsing with size limits
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 6. Input sanitization - Prevents XSS and prototype pollution
+// 7. Input sanitization - Prevents XSS and prototype pollution
 app.use(sanitizeRequestBody);
 
-// 7. Global rate limiting (applies to all routes)
+// 8. Global rate limiting (applies to all routes)
 app.use(apiRateLimiter);
 
-// 8. Logging with request ID
+// 9. Logging with request ID
 morgan.token('reqId', (req) => (req as any).requestId);
 if (!isProduction) {
   app.use(morgan(':method :url :status :response-time ms - :reqId'));
@@ -115,7 +120,7 @@ if (!isProduction) {
   app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent" :reqId'));
 }
 
-// 9. Add security response headers
+// 10. Add security response headers
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -137,6 +142,30 @@ const API_PREFIX = '/api/v1';
 // Serve static files for uploads (Local file storage replacing Supabase)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads'))); // Legacy support
 app.use(`${API_PREFIX}/uploads`, express.static(path.join(process.cwd(), 'uploads'))); // Proxied via NGINX
+
+// Serve production frontend build assets in production mode
+if (isProduction) {
+  const frontendDistPath = path.join(process.cwd(), '..', 'frontend', 'dist');
+  console.log(`📦 Serving static frontend from: ${frontendDistPath}`);
+
+  if (fs.existsSync(frontendDistPath)) {
+    app.use(express.static(frontendDistPath));
+
+    // SPA wildcard fallback - All non-API routes serve index.html
+    // This enables client-side React Router paths (/, /products, /system, /system/invoices, etc.)
+    // to work correctly on browser refresh without 404 errors.
+    app.get('*', (req, res, next) => {
+      // Skip API routes - let them fall through to the 404 handler
+      if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path === '/health' || req.path === '/test') {
+        return next();
+      }
+      res.sendFile(path.join(frontendDistPath, 'index.html'));
+    });
+  } else {
+    console.warn(`⚠️ Frontend build not found at: ${frontendDistPath}`);
+    console.warn('   Run `npm run build` in the frontend directory first.');
+  }
+}
 
 // Health check — MUST be instant. Render sends these every 5s from multiple IPs.
 // NEVER open a DB connection here. Use cached state from real queries.
@@ -441,7 +470,7 @@ app.get('/', async (_req, res) => {
     <p class="timestamp">${currentTime}</p>
     
     <div class="footer">
-      ✨ Powered by Express.js + Prisma + Supabase
+      ✨ Powered by Express.js + Prisma + MySQL
     </div>
   </div>
 </body>
@@ -737,10 +766,10 @@ app.use(`${API_PREFIX}/products`, productRoutes);
 app.use(`${API_PREFIX}/categories`, categoryRoutes);
 app.use(`${API_PREFIX}/brands`, brandRoutes);
 app.use(`${API_PREFIX}/shops`, shopRoutes);
-app.use(`${API_PREFIX}/admin`, adminRoutes);
 app.use(`${API_PREFIX}/shop-admin`, shopAdminRoutes);
 app.use(`${API_PREFIX}/suppliers`, supplierRoutes);
 app.use(`${API_PREFIX}/grns`, grnRoutes);
+app.use(`${API_PREFIX}/public`, publicRoutes);
 app.use(`${API_PREFIX}/upload`, uploadRoutes);
 
 // Error handling

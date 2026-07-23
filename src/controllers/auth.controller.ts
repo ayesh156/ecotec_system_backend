@@ -5,18 +5,17 @@ import { prisma } from '../lib/prisma';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
 import { jwtConfig, passwordConfig } from '../config/security';
+import { getShopId } from '../lib/shopId';
 
 // ===================================
 // JWT Configuration - Using Secure Config Module
 // ===================================
 
-// Access secrets via secure config (no hardcoded fallbacks in production)
 const getJwtSecret = () => jwtConfig.secret;
 const getRefreshSecret = () => jwtConfig.refreshSecret;
 const ACCESS_TOKEN_EXPIRES_IN = jwtConfig.accessTokenExpiry;
 const REFRESH_TOKEN_EXPIRES_IN = jwtConfig.refreshTokenExpiry;
 
-// Cookie configuration
 const REFRESH_TOKEN_COOKIE_NAME = jwtConfig.cookieName;
 const getRefreshTokenCookieOptions = jwtConfig.getCookieOptions;
 
@@ -39,9 +38,6 @@ const generateRefreshToken = (payload: { id: string }): string => {
   return jwt.sign(payload, getRefreshSecret(), { expiresIn: REFRESH_TOKEN_EXPIRES_IN });
 };
 
-// Store refresh tokens in database for persistence across server restarts
-// This ensures users stay logged in even when Render.com cold-starts the service
-
 const storeRefreshToken = async (userId: string, token: string): Promise<void> => {
   const decoded = jwt.decode(token) as { exp: number };
   const expiresAt = new Date(decoded.exp * 1000);
@@ -50,10 +46,9 @@ const storeRefreshToken = async (userId: string, token: string): Promise<void> =
     data: { token, userId, expiresAt },
   });
   
-  // Clean up expired tokens for this user (housekeeping)
   await prisma.refreshToken.deleteMany({
     where: { userId, expiresAt: { lt: new Date() } },
-  }).catch(() => {}); // Non-critical, ignore errors
+  }).catch(() => {});
 };
 
 const validateRefreshToken = async (token: string): Promise<string | null> => {
@@ -62,7 +57,6 @@ const validateRefreshToken = async (token: string): Promise<string | null> => {
   });
   
   if (!stored || stored.expiresAt < new Date()) {
-    // Clean up expired token if found
     if (stored) {
       await prisma.refreshToken.delete({ where: { token } }).catch(() => {});
     }
@@ -84,7 +78,7 @@ const revokeAllUserRefreshTokens = async (userId: string): Promise<void> => {
 // ===================================
 
 /**
- * @desc    Register a new user
+ * @desc    Register a new user (Single-Shop mode: auto-assigns default shop)
  * @route   POST /api/v1/auth/register
  * @access  Public
  */
@@ -94,9 +88,8 @@ export const register = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { email, password, name, shopSlug } = req.body;
+    const { email, password, name } = req.body;
 
-    // Validation
     if (!email || !password || !name) {
       throw new AppError('Please provide email, password, and name', 400);
     }
@@ -105,7 +98,6 @@ export const register = async (
       throw new AppError('Password must be at least 8 characters long', 400);
     }
 
-    // Check if user already exists
     const existingUser = await prisma.user.findUnique({
       where: { email: email.toLowerCase() },
     });
@@ -114,30 +106,19 @@ export const register = async (
       throw new AppError('User with this email already exists', 409);
     }
 
-    // Find shop if slug provided
-    let shopId: string | null = null;
-    if (shopSlug) {
-      const shop = await prisma.shop.findUnique({
-        where: { slug: shopSlug },
-      });
-      if (!shop) {
-        throw new AppError('Shop not found', 404);
-      }
-      shopId = shop.id;
-    }
+    // Get default shop ID - creates users tied to the default shop
+    const shopId = getShopId();
 
-    // Hash password with bcrypt (using secure config cost factor)
     const salt = await bcrypt.genSalt(passwordConfig.bcryptRounds);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user
     const user = await prisma.user.create({
       data: {
         email: email.toLowerCase(),
         password: hashedPassword,
         name,
         shopId,
-        role: 'STAFF', // Default role
+        role: 'STAFF',
       },
       select: {
         id: true,
@@ -151,7 +132,6 @@ export const register = async (
       },
     });
 
-    // Generate tokens
     const tokenPayload: TokenPayload = {
       id: user.id,
       email: user.email,
@@ -162,10 +142,8 @@ export const register = async (
     const accessToken = generateAccessToken(tokenPayload);
     const refreshToken = generateRefreshToken({ id: user.id });
 
-    // Store refresh token
     await storeRefreshToken(user.id, refreshToken);
 
-    // Set refresh token in HttpOnly cookie
     res.cookie(REFRESH_TOKEN_COOKIE_NAME, refreshToken, getRefreshTokenCookieOptions());
 
     res.status(201).json({
@@ -180,7 +158,7 @@ export const register = async (
           shop: user.shop,
         },
         accessToken,
-        refreshToken, // Also send in body for environments where cookies don't work
+        refreshToken,
       },
     });
   } catch (error) {
@@ -201,13 +179,10 @@ export const login = async (
   try {
     const { email, password } = req.body;
 
-    // Validation
     if (!email || !password) {
       throw new AppError('Please provide email and password', 400);
     }
 
-    // Find user with password
-    // Auto-retries on DB connection failure via Prisma $use middleware
     const user = await prisma.user.findUnique({
       where: { email: email.toLowerCase() },
       include: {
@@ -225,19 +200,16 @@ export const login = async (
       throw new AppError('Your account has been deactivated. Please contact support.', 401);
     }
 
-    // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       throw new AppError('Invalid email or password', 401);
     }
 
-    // Update last login
     await prisma.user.update({
       where: { id: user.id },
       data: { lastLogin: new Date() },
     });
 
-    // Generate tokens
     const tokenPayload: TokenPayload = {
       id: user.id,
       email: user.email,
@@ -248,10 +220,8 @@ export const login = async (
     const accessToken = generateAccessToken(tokenPayload);
     const refreshToken = generateRefreshToken({ id: user.id });
 
-    // Store refresh token
     await storeRefreshToken(user.id, refreshToken);
 
-    // Set refresh token in HttpOnly cookie
     res.cookie(REFRESH_TOKEN_COOKIE_NAME, refreshToken, getRefreshTokenCookieOptions());
 
     res.status(200).json({
@@ -266,7 +236,7 @@ export const login = async (
           shop: user.shop,
         },
         accessToken,
-        refreshToken, // Also send in body for environments where cookies don't work
+        refreshToken,
       },
     });
   } catch (error) {
@@ -275,9 +245,9 @@ export const login = async (
 };
 
 /**
- * @desc    Refresh access token using refresh token from cookie
+ * @desc    Refresh access token
  * @route   POST /api/v1/auth/refresh
- * @access  Public (requires valid refresh token cookie)
+ * @access  Public
  */
 export const refresh = async (
   req: Request,
@@ -285,10 +255,8 @@ export const refresh = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    // Get refresh token from cookie first, then fallback to body (for development/mobile)
     let refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME];
     
-    // Fallback: Check request body (for environments where cookies don't work)
     if (!refreshToken && req.body?.refreshToken) {
       refreshToken = req.body.refreshToken;
     }
@@ -297,24 +265,20 @@ export const refresh = async (
       throw new AppError('No refresh token provided', 401);
     }
 
-    // Verify refresh token
     let decoded: { id: string };
     try {
       decoded = jwt.verify(refreshToken, getRefreshSecret()) as { id: string };
     } catch (error) {
-      // Clear invalid cookie
       res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, getRefreshTokenCookieOptions());
       throw new AppError('Invalid or expired refresh token', 401);
     }
 
-    // Validate refresh token is still in store (not revoked)
     const storedUserId = await validateRefreshToken(refreshToken);
     if (!storedUserId || storedUserId !== decoded.id) {
       res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, getRefreshTokenCookieOptions());
       throw new AppError('Refresh token has been revoked', 401);
     }
 
-    // Get user from database
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
       include: {
@@ -330,10 +294,8 @@ export const refresh = async (
       throw new AppError('User not found or inactive', 401);
     }
 
-    // Revoke old refresh token (token rotation)
     await revokeRefreshToken(refreshToken);
 
-    // Generate new tokens
     const tokenPayload: TokenPayload = {
       id: user.id,
       email: user.email,
@@ -344,10 +306,8 @@ export const refresh = async (
     const newAccessToken = generateAccessToken(tokenPayload);
     const newRefreshToken = generateRefreshToken({ id: user.id });
 
-    // Store new refresh token
     await storeRefreshToken(user.id, newRefreshToken);
 
-    // Set new refresh token in HttpOnly cookie
     res.cookie(REFRESH_TOKEN_COOKIE_NAME, newRefreshToken, getRefreshTokenCookieOptions());
 
     res.status(200).json({
@@ -362,7 +322,7 @@ export const refresh = async (
           shop: user.shop,
         },
         accessToken: newAccessToken,
-        refreshToken: newRefreshToken, // Also send in body for environments where cookies don't work
+        refreshToken: newRefreshToken,
       },
     });
   } catch (error) {
@@ -371,7 +331,7 @@ export const refresh = async (
 };
 
 /**
- * @desc    Logout user (revoke refresh token)
+ * @desc    Logout user
  * @route   POST /api/v1/auth/logout
  * @access  Public
  */
@@ -381,15 +341,12 @@ export const logout = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    // Accept refresh token from cookie OR request body (for environments where cookies don't work)
     const refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] || req.body?.refreshToken;
 
     if (refreshToken) {
-      // Revoke the refresh token
       await revokeRefreshToken(refreshToken);
     }
 
-    // Clear the cookie
     res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, getRefreshTokenCookieOptions());
 
     res.status(200).json({
@@ -402,9 +359,9 @@ export const logout = async (
 };
 
 /**
- * @desc    Logout from all devices (revoke all refresh tokens)
+ * @desc    Logout from all devices
  * @route   POST /api/v1/auth/logout-all
- * @access  Private (requires authentication)
+ * @access  Private
  */
 export const logoutAll = async (
   req: AuthRequest,
@@ -416,10 +373,8 @@ export const logoutAll = async (
       throw new AppError('Not authenticated', 401);
     }
 
-    // Revoke all refresh tokens for this user
     await revokeAllUserRefreshTokens(req.user.id);
 
-    // Clear the cookie
     res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, getRefreshTokenCookieOptions());
 
     res.status(200).json({
@@ -499,7 +454,6 @@ export const updateMe = async (
 
     const { name, email } = req.body;
 
-    // Check if email is being changed and if it's already taken
     if (email && email.toLowerCase() !== req.user.email) {
       const existingUser = await prisma.user.findUnique({
         where: { email: email.toLowerCase() },
@@ -561,7 +515,6 @@ export const changePassword = async (
       throw new AppError('New password must be at least 8 characters long', 400);
     }
 
-    // Get user with password
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
     });
@@ -570,26 +523,21 @@ export const changePassword = async (
       throw new AppError('User not found', 404);
     }
 
-    // Verify current password
     const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
     if (!isPasswordValid) {
       throw new AppError('Current password is incorrect', 401);
     }
 
-    // Hash new password
     const salt = await bcrypt.genSalt(12);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    // Update password
     await prisma.user.update({
       where: { id: req.user.id },
       data: { password: hashedPassword },
     });
 
-    // Revoke all refresh tokens (force re-login on all devices)
     await revokeAllUserRefreshTokens(req.user.id);
 
-    // Clear current cookie
     res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, getRefreshTokenCookieOptions());
 
     res.status(200).json({

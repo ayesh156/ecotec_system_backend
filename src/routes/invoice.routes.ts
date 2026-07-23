@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { protect, requireShop } from '../middleware/auth';
+import { protect } from '../middleware/auth';
 import { routeTimeout } from '../middleware/timeout';
 import {
   createInvoice,
@@ -23,7 +23,7 @@ import { validateInvoice, validateInvoiceUpdate, validatePayment } from '../vali
 const router = Router();
 
 // 🔒 All invoice routes require authentication
-router.use(protect, requireShop);
+router.use(protect);
 
 // Invoice CRUD routes
 router.route('/')

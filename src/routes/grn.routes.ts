@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { protect, requireShop, authorize } from '../middleware/auth';
+import { protect, authorize } from '../middleware/auth';
 import type { AuthRequest } from '../middleware/auth';
 import { prisma } from '../lib/prisma';
 import { PaymentMethod, PaymentStatus } from '@prisma/client';
@@ -11,17 +11,17 @@ import {
   deleteGRN,
   updateGRN,
   sendGRNEmail,
-  generateGRNPDFController
+  downloadGRNPDF
 } from '../controllers/grn.controller';
 
 const router = Router();
 
-router.use(protect, requireShop);
+router.use(protect);
 
 router.post('/', createGRN);
 router.get('/', getGRNs);
 router.get('/:id', getGRNById);
-router.get('/:id/pdf', routeTimeout(60000, 'PDF generation timed out. Please try again.'), generateGRNPDFController);
+router.get('/:id/pdf', routeTimeout(60000, 'PDF generation timed out. Please try again.'), downloadGRNPDF);
 router.put('/:id', updateGRN);
 router.delete('/:id', authorize('ADMIN', 'MANAGER'), deleteGRN);
 

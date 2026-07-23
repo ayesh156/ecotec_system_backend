@@ -4,176 +4,124 @@ import type { AuthRequest } from '../types/express';
 import { StockMovementType, GRNStatus, PaymentStatus, PriceChangeType } from '@prisma/client';
 import { sendGRNWithPDF, GRNEmailData } from '../services/emailService';
 import { generateGRNPDF, GRNPDFData } from '../services/pdfService';
-
-// Helper function to get effective shopId for SuperAdmin shop viewing
-const getEffectiveShopId = (req: AuthRequest): string | null => {
-  const { shopId: queryShopId } = req.query;
-  const userRole = req.user?.role;
-  const userShopId = req.user?.shopId;
-  
-  // SuperAdmin can view any shop by passing shopId query parameter
-  if (userRole === 'SUPER_ADMIN' && queryShopId && typeof queryShopId === 'string') {
-    return queryShopId;
-  }
-  
-  return userShopId || null;
-};
+import { getShopId } from '../lib/shopId';
 
 // Helper to generate GRN Number
 const generateGRNNumber = async (shopId: string): Promise<string> => {
   const count = await prisma.gRN.count({ where: { shopId } });
   const dateStr = new Date().getFullYear().toString();
-  // Format: GRN-2024-001
   return `GRN-${dateStr}-${(count + 1).toString().padStart(4, '0')}`;
 };
 
 // Create a new GRN with full stock/price effects
 export const createGRN = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const shopId = getEffectiveShopId(req);
+    const shopId = getShopId();
     const userId = req.user?.id;
-    
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
 
     const {
-      supplierId,
-      referenceNo,
-      date,
-      expectedDate,
-      deliveryNote,
-      vehicleNumber,
-      receivedBy,
-      receivedDate,
-      items, // Array of { productId, quantity, costPrice, sellingPrice? }
-      discount = 0,
-      tax = 0,
-      notes,
-      paymentStatus = 'UNPAID',
-      paidAmount = 0
+      supplierId, referenceNo, date, expectedDate, deliveryNote, vehicleNumber,
+      receivedBy, receivedDate, items, discount = 0,
+      tax = 0, notes, status: rawStatus = 'PENDING', paymentStatus: rawPaymentStatus = 'UNPAID',
     } = req.body;
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ success: false, message: 'GRN must have at least one item' });
+    // Normalize enum values to uppercase for Prisma
+    const status = (rawStatus as string).toUpperCase();
+    const paymentStatus = (rawPaymentStatus as string).toUpperCase();
+
+    if (!supplierId || !items || items.length === 0) {
+      return res.status(400).json({ success: false, message: 'Supplier and items are required' });
     }
 
-    // Calculate totals
-    const subtotal = items.reduce((sum: number, item: any) => sum + (item.quantity * item.costPrice), 0);
-    const totalAmount = subtotal + tax - discount;
+    // Validate supplier
+    const supplier = await prisma.supplier.findUnique({ where: { id: supplierId } });
+    if (!supplier || supplier.shopId !== shopId) {
+      return res.status(404).json({ success: false, message: 'Supplier not found' });
+    }
 
+    let subtotal = 0;
+    const itemDetails: Array<{
+      productId: string; quantity: number; costPrice: number;
+      sellingPrice?: number; totalCost: number;
+    }> = [];
+
+    for (const item of items) {
+      const product = await prisma.product.findUnique({ where: { id: item.productId } });
+      if (!product || product.shopId !== shopId) {
+        return res.status(404).json({ success: false, message: `Product ${item.productId} not found` });
+      }
+      const unitCost = item.costPrice || 0;
+      const lineTotal = item.quantity * unitCost;
+      subtotal += lineTotal;
+      itemDetails.push({
+        productId: item.productId, quantity: item.quantity,
+        costPrice: unitCost, sellingPrice: item.sellingPrice, totalCost: lineTotal,
+      });
+    }
+
+    const totalAmount = subtotal + tax - discount;
     const grnNumber = await generateGRNNumber(shopId);
 
-    // Perform everything in a transaction
     const grn = await prisma.$transaction(async (tx) => {
-      // 1. Create GRN Header
       const newGRN = await tx.gRN.create({
         data: {
-          shopId,
-          grnNumber,
-          supplierId,
-          referenceNo,
+          grnNumber, shopId, supplierId, referenceNo, discount, tax, subtotal,
+          totalAmount, paidAmount: 0, status: status as GRNStatus,
+          paymentStatus: paymentStatus as PaymentStatus, notes,
           date: date ? new Date(date) : new Date(),
-          expectedDate: expectedDate ? new Date(expectedDate) : null,
-          deliveryNote,
-          vehicleNumber,
-          receivedBy,
-          receivedDate: receivedDate ? new Date(receivedDate) : null,
-          subtotal,
-          tax,
-          discount,
-          totalAmount,
-          paidAmount,
-          status: 'COMPLETED', // Direct to completed for now, or could be DRAFT
-          paymentStatus: paymentStatus as PaymentStatus,
-          notes,
-          createdById: userId,
-        }
+          expectedDate: expectedDate ? new Date(expectedDate) : undefined,
+          receivedDate: receivedDate ? new Date(receivedDate) : undefined,
+          deliveryNote, vehicleNumber, receivedBy, createdById: userId || undefined,
+          items: {
+            create: itemDetails.map(item => ({
+              productId: item.productId, quantity: item.quantity,
+              costPrice: item.costPrice, sellingPrice: item.sellingPrice,
+              totalCost: item.totalCost,
+            })),
+          },
+        },
+        include: { items: { include: { product: true } }, supplier: true },
       });
 
-      // 2. Process Items
-      for (const item of items) {
-        // Fetch current product state
-        const product = await tx.product.findUnique({
-          where: { id: item.productId }
-        });
+      // Update product stock/cost
+      for (const item of itemDetails) {
+        const product = await tx.product.findUnique({ where: { id: item.productId } });
+        if (!product) continue;
 
-        if (!product || product.shopId !== shopId) {
-          throw new Error(`Product not found or access denied: ${item.productId}`);
+        const updateData: any = {
+          stock: { increment: item.quantity },
+          totalPurchased: { increment: item.quantity },
+          lastGRNDate: new Date(),
+          lastGRNId: newGRN.id,
+        };
+
+        if (item.costPrice > 0) {
+          updateData.lastCostPrice = product.costPrice;
+          updateData.costPrice = item.costPrice;
+          if (item.sellingPrice) updateData.price = item.sellingPrice;
         }
 
-        // a. Create GRN Item
-        await tx.gRNItem.create({
-          data: {
-            grnId: newGRN.id,
-            productId: item.productId,
-            quantity: item.quantity,
-            costPrice: item.costPrice,
-            sellingPrice: item.sellingPrice, // Optional new selling price
-            totalCost: item.quantity * item.costPrice
-          }
-        });
+        await tx.product.update({ where: { id: item.productId }, data: updateData });
 
-        // b. Update Product Stock & Price
-        const newStock = product.stock + item.quantity;
-        const totalPurchased = product.totalPurchased + item.quantity;
-        
-        // Update product data
-        await tx.product.update({
-          where: { id: item.productId },
-          data: {
-            stock: newStock,
-            totalPurchased,
-            costPrice: item.costPrice, // Update to latest cost
-            lastCostPrice: product.costPrice, // Archive old cost
-            // Update selling price ONLY if provided
-            price: item.sellingPrice ? item.sellingPrice : product.price,
-            lastGRNId: newGRN.id,
-            lastGRNDate: new Date()
-          }
-        });
-
-        // c. Create Stock Movement
+        // Stock movement record
         await tx.stockMovement.create({
           data: {
-            shopId,
-            productId: item.productId,
-            type: StockMovementType.GRN_IN,
-            quantity: item.quantity,
-            previousStock: product.stock,
-            newStock: newStock,
-            referenceId: newGRN.id,
-            referenceNumber: grnNumber,
-            referenceType: 'grn',
-            unitPrice: item.costPrice, // Cost price for GRN
-            createdBy: userId,
-            notes: `GRN Received from Supplier`
-          }
+            productId: item.productId, type: 'GRN_IN', quantity: item.quantity,
+            previousStock: product.stock, newStock: product.stock + item.quantity,
+            referenceId: newGRN.id, referenceNumber: grnNumber, referenceType: 'grn',
+            unitPrice: item.costPrice, shopId, createdBy: userId,
+          },
         });
 
-        // d. Price History (Track Changes)
-        const costChanged = product.costPrice !== item.costPrice;
-        const sellingChanged = item.sellingPrice && product.price !== item.sellingPrice;
-
-        if (costChanged || sellingChanged) {
-          let changeType: PriceChangeType = PriceChangeType.COST_UPDATE;
-          if (costChanged && sellingChanged) changeType = PriceChangeType.BOTH;
-          else if (sellingChanged) changeType = PriceChangeType.SELLING_UPDATE;
-
+        // Price history record
+        if (item.costPrice > 0 && (item.costPrice !== product.costPrice || item.sellingPrice !== product.price)) {
           await tx.priceHistory.create({
             data: {
-              shopId,
-              productId: item.productId,
-              product: { connect: { id: item.productId } },
-              changeType,
-              previousCostPrice: product.costPrice || 0,
-              newCostPrice: item.costPrice,
-              previousSellingPrice: product.price,
-              newSellingPrice: item.sellingPrice || product.price,
-              reason: `GRN ${grnNumber}`,
-              referenceId: newGRN.id,
-              createdBy: userId
-            }
+              productId: item.productId, changeType: item.sellingPrice ? 'BOTH' : 'COST_UPDATE',
+              previousCostPrice: product.costPrice, newCostPrice: item.costPrice,
+              previousSellingPrice: product.price, newSellingPrice: item.sellingPrice || product.price,
+              reason: 'grn_purchase', referenceId: newGRN.id, createdBy: userId, shopId,
+            },
           });
         }
       }
@@ -182,546 +130,274 @@ export const createGRN = async (req: AuthRequest, res: Response, next: NextFunct
     });
 
     res.status(201).json({ success: true, data: grn });
-  } catch (error: any) {
-    next(error);
-  }
+  } catch (error) { next(error); }
 };
 
-// Get all GRNs
+// Get all GRNs for the shop
 export const getGRNs = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const shopId = getEffectiveShopId(req);
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
+    const shopId = getShopId();
+    const { status: rawStatus, paymentStatus: rawPaymentStatus, supplierId, search, page = '1', limit = '20' } = req.query;
 
-    const { status, supplierId } = req.query;
+    // Normalize enum query params to uppercase for Prisma
+    const status = rawStatus ? (rawStatus as string).toUpperCase() : undefined;
+    const paymentStatus = rawPaymentStatus ? (rawPaymentStatus as string).toUpperCase() : undefined;
 
     const where: any = { shopId };
-    if (status) where.status = status;
-    if (supplierId) where.supplierId = supplierId;
+    if (status && status !== 'ALL') where.status = status;
+    if (paymentStatus && paymentStatus !== 'ALL') where.paymentStatus = paymentStatus;
+    if (supplierId && supplierId !== 'all') where.supplierId = supplierId;
+    if (search) {
+      where.OR = [
+        { grnNumber: { contains: search as string } },
+        { referenceNo: { contains: search as string } },
+        { supplier: { name: { contains: search as string, mode: 'insensitive' } } },
+      ];
+    }
 
-    const grns = await prisma.gRN.findMany({
-      where,
-      include: {
-        supplier: {
-          select: { name: true }
-        },
-        items: {
-          select: {
-            quantity: true
-          }
-        },
-        _count: {
-          select: { items: true, reminders: true }
-        }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
+    const pageNum = Math.max(1, parseInt(page as string) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 20));
+    const skip = (pageNum - 1) * limitNum;
 
-    // Calculate totals for each GRN from items
-    const grnsWithTotals = grns.map(grn => {
-      const totalQuantity = grn.items.reduce((sum, item) => sum + item.quantity, 0);
-      return {
-        ...grn,
-        totalOrderedQuantity: totalQuantity,
-        totalAcceptedQuantity: totalQuantity, // All accepted for now
-        totalRejectedQuantity: 0, // No rejection tracking yet
-        reminderCount: grn._count.reminders, // Include reminder count
-        items: undefined // Remove items from response to keep it light
-      };
-    });
+    const [grns, total] = await Promise.all([
+      prisma.gRN.findMany({
+        where, orderBy: { date: 'desc' }, skip, take: limitNum,
+        include: { supplier: { select: { id: true, name: true, phone: true } }, items: true, payments: true, _count: { select: { reminders: true } } },
+      }),
+      prisma.gRN.count({ where }),
+    ]);
 
-    res.json({ success: true, data: grnsWithTotals });
-  } catch (error) {
-    next(error);
-  }
+    res.json({ success: true, data: grns, pagination: { page: pageNum, limit: limitNum, total, totalPages: Math.ceil(total / limitNum) } });
+  } catch (error) { next(error); }
 };
 
-// Get GRN Details
+// Get GRN by ID
 export const getGRNById = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const shopId = getEffectiveShopId(req);
+    const shopId = getShopId();
     const { id } = req.params;
 
-    const grn = await prisma.gRN.findUnique({
+    let grn = await prisma.gRN.findUnique({
       where: { id },
-      include: {
-        supplier: true,
-        items: {
-          include: {
-            product: {
-              select: { name: true, barcode: true, serialNumber: true }
-            }
-          }
-        },
-        createdBy: {
-          select: { name: true }
-        },
-        _count: {
-          select: { reminders: true }
-        }
-      }
+      include: { supplier: true, items: { include: { product: true } }, payments: { orderBy: { sentAt: 'desc' } }, reminders: { orderBy: { sentAt: 'desc' } } },
     });
 
     if (!grn) {
-      return res.status(404).json({ success: false, message: 'GRN not found' });
+      grn = await prisma.gRN.findFirst({
+        where: { OR: [{ grnNumber: id }, { grnNumber: { contains: id } }] },
+        include: { supplier: true, items: { include: { product: true } }, payments: { orderBy: { sentAt: 'desc' } }, reminders: { orderBy: { sentAt: 'desc' } } },
+      });
     }
 
-    if (grn.shopId !== shopId) {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
+    if (!grn) return res.status(404).json({ success: false, message: 'GRN not found' });
+    if (grn.shopId !== shopId) return res.status(403).json({ success: false, message: 'Access denied' });
 
-    // Add reminderCount to response
-    const grnWithReminders = {
-      ...grn,
-      reminderCount: grn._count.reminders
-    };
-
-    res.json({ success: true, data: grnWithReminders });
-  } catch (error) {
-    next(error);
-  }
+    res.json({ success: true, data: grn });
+  } catch (error) { next(error); }
 };
 
-// Delete GRN with stock reversal
-export const deleteGRN = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const shopId = getEffectiveShopId(req);
-    const userId = req.user?.id;
-    const { id } = req.params;
-
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
-
-    const grn = await prisma.gRN.findUnique({
-      where: { id },
-      include: {
-        items: true
-      }
-    });
-
-    if (!grn) {
-      return res.status(404).json({ success: false, message: 'GRN not found' });
-    }
-
-    if (grn.shopId !== shopId) {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    // Reverse stock changes in a transaction
-    await prisma.$transaction(async (tx) => {
-      // Reverse each item's stock
-      for (const item of grn.items) {
-        const product = await tx.product.findUnique({
-          where: { id: item.productId }
-        });
-
-        if (product) {
-          const newStock = Math.max(0, product.stock - item.quantity);
-          const newTotalPurchased = Math.max(0, product.totalPurchased - item.quantity);
-
-          await tx.product.update({
-            where: { id: item.productId },
-            data: {
-              stock: newStock,
-              totalPurchased: newTotalPurchased
-            }
-          });
-
-          // Create reversal stock movement
-          await tx.stockMovement.create({
-            data: {
-              shopId,
-              productId: item.productId,
-              type: StockMovementType.ADJUSTMENT,
-              quantity: -item.quantity,
-              previousStock: product.stock,
-              newStock: newStock,
-              referenceId: grn.id,
-              referenceNumber: grn.grnNumber,
-              referenceType: 'grn_delete',
-              unitPrice: item.costPrice,
-              createdBy: userId,
-              notes: `GRN Deleted - Stock Reversed`
-            }
-          });
-        }
-      }
-
-      // Delete GRN items first (due to foreign key)
-      await tx.gRNItem.deleteMany({
-        where: { grnId: id }
-      });
-
-      // Delete the GRN
-      await tx.gRN.delete({
-        where: { id }
-      });
-    });
-
-    res.json({ success: true, message: 'GRN deleted and stock reversed' });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Update GRN (full update including items)
+// Update GRN
 export const updateGRN = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const shopId = getEffectiveShopId(req);
+    const shopId = getShopId();
     const { id } = req.params;
+    const { status: rawStatus, paymentStatus: rawPaymentStatus, notes, paidAmount } = req.body;
 
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
+    // Normalize enum values to uppercase for Prisma
+    const status = rawStatus ? (rawStatus as string).toUpperCase() : undefined;
+    const paymentStatus = rawPaymentStatus ? (rawPaymentStatus as string).toUpperCase() : undefined;
 
-    const existingGRN = await prisma.gRN.findUnique({
-      where: { id },
-      include: { items: true }
-    });
+    const existing = await prisma.gRN.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ success: false, message: 'GRN not found' });
+    if (existing.shopId !== shopId) return res.status(403).json({ success: false, message: 'Access denied' });
 
-    if (!existingGRN) {
-      return res.status(404).json({ success: false, message: 'GRN not found' });
-    }
+    const updateData: any = {};
+    if (status) updateData.status = status;
+    if (paymentStatus) updateData.paymentStatus = paymentStatus;
+    if (notes !== undefined) updateData.notes = notes;
+    if (paidAmount !== undefined) updateData.paidAmount = paidAmount;
 
-    if (existingGRN.shopId !== shopId) {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    const { 
-      notes, paymentStatus, paidAmount, status, 
-      supplierId, referenceNo, date, expectedDate,
-      deliveryNote, vehicleNumber, receivedBy, receivedDate,
-      discount, tax, items 
-    } = req.body;
-
-    // Calculate totals if items are provided
-    let subtotal = existingGRN.subtotal;
-    let totalAmount = existingGRN.totalAmount;
-    
-    if (items && Array.isArray(items) && items.length > 0) {
-      subtotal = items.reduce((sum: number, item: { quantity: number; costPrice: number }) => 
-        sum + (item.quantity * item.costPrice), 0);
-      const discountAmount = discount || existingGRN.discount || 0;
-      const taxAmount = tax || existingGRN.tax || 0;
-      totalAmount = subtotal - discountAmount + taxAmount;
-    }
-
-    // Use transaction for atomic update
-    const updated = await prisma.$transaction(async (tx) => {
-      // If updating items, first reverse the old stock quantities
-      if (items && Array.isArray(items) && items.length > 0) {
-        // Reverse old item stock
-        for (const oldItem of existingGRN.items) {
-          if (oldItem.productId) {
-            await tx.product.update({
-              where: { id: oldItem.productId },
-              data: {
-                stock: { decrement: oldItem.quantity },
-              }
-            });
-          }
-        }
-        
-        // Delete existing items
-        await tx.gRNItem.deleteMany({
-          where: { grnId: id }
-        });
-      }
-
-      // Update the GRN
-      const updatedGRN = await tx.gRN.update({
-        where: { id },
-        data: {
-          supplierId: supplierId || existingGRN.supplierId,
-          referenceNo: referenceNo !== undefined ? referenceNo : existingGRN.referenceNo,
-          date: date ? new Date(date) : existingGRN.date,
-          expectedDate: expectedDate ? new Date(expectedDate) : existingGRN.expectedDate,
-          deliveryNote: deliveryNote !== undefined ? deliveryNote : existingGRN.deliveryNote,
-          vehicleNumber: vehicleNumber !== undefined ? vehicleNumber : existingGRN.vehicleNumber,
-          receivedBy: receivedBy !== undefined ? receivedBy : existingGRN.receivedBy,
-          receivedDate: receivedDate ? new Date(receivedDate) : existingGRN.receivedDate,
-          notes: notes !== undefined ? notes : existingGRN.notes,
-          paymentStatus: paymentStatus ? paymentStatus as PaymentStatus : existingGRN.paymentStatus,
-          paidAmount: paidAmount !== undefined ? paidAmount : existingGRN.paidAmount,
-          status: status ? status as GRNStatus : existingGRN.status,
-          discount: discount !== undefined ? discount : existingGRN.discount,
-          tax: tax !== undefined ? tax : existingGRN.tax,
-          subtotal,
-          totalAmount,
-        }
-      });
-
-      // Create new items if provided and update stock
-      if (items && Array.isArray(items) && items.length > 0) {
-        for (const item of items) {
-          await tx.gRNItem.create({
-            data: {
-              grnId: id,
-              productId: item.productId,
-              quantity: item.quantity,
-              costPrice: item.costPrice,
-              sellingPrice: item.sellingPrice || 0,
-              totalCost: item.quantity * item.costPrice,
-            }
-          });
-          
-          // Update product stock and cost price
-          if (item.productId) {
-            const product = await tx.product.findUnique({
-              where: { id: item.productId }
-            });
-            
-            if (product) {
-              await tx.product.update({
-                where: { id: item.productId },
-                data: {
-                  stock: { increment: item.quantity },
-                  costPrice: item.costPrice,
-                  ...(item.sellingPrice && { price: item.sellingPrice }),
-                }
-              });
-            }
-          }
-        }
-      }
-
-      // Return updated GRN with relations
-      return await tx.gRN.findUnique({
-        where: { id },
-        include: {
-          supplier: true,
-          items: {
-            include: {
-              product: {
-                select: { name: true }
-              }
-            }
-          }
-        }
-      });
-    });
-
-    res.json({ success: true, data: updated });
-  } catch (error) {
-    next(error);
-  }
+    const grn = await prisma.gRN.update({ where: { id }, data: updateData });
+    res.json({ success: true, data: grn });
+  } catch (error) { next(error); }
 };
 
-/**
- * Send GRN Email to Supplier with PDF attachment
- * POST /api/v1/grns/:id/send-email
- */
+// Delete GRN
+export const deleteGRN = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const shopId = getShopId();
+    const { id } = req.params;
+
+    const existing = await prisma.gRN.findUnique({ where: { id }, include: { items: true } });
+    if (!existing) return res.status(404).json({ success: false, message: 'GRN not found' });
+    if (existing.shopId !== shopId) return res.status(403).json({ success: false, message: 'Access denied' });
+
+    await prisma.$transaction(async (tx) => {
+      for (const item of existing.items) {
+        await tx.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.quantity }, totalPurchased: { decrement: item.quantity } } });
+      }
+      await tx.gRN.delete({ where: { id: existing.id } });
+    });
+
+    res.json({ success: true, message: 'GRN deleted successfully' });
+  } catch (error) { next(error); }
+};
+
+// Add payment to GRN
+export const addGRNPayment = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const shopId = getShopId();
+    const { id } = req.params;
+    const { amount, paymentMethod, notes } = req.body;
+
+    const existing = await prisma.gRN.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ success: false, message: 'GRN not found' });
+    if (existing.shopId !== shopId) return res.status(403).json({ success: false, message: 'Access denied' });
+
+    const newPaidAmount = existing.paidAmount + amount;
+    const newPaymentStatus = newPaidAmount >= existing.totalAmount ? 'PAID' : (newPaidAmount > 0 ? 'PARTIAL' : 'UNPAID');
+
+    const [payment] = await prisma.$transaction(async (tx) => {
+      const newPayment = await tx.gRNPayment.create({
+        data: { grnId: id, amount, paymentMethod, notes, shopId, recordedById: req.user?.id || undefined },
+      });
+      await tx.gRN.update({ where: { id }, data: { paidAmount: newPaidAmount, paymentStatus: newPaymentStatus as PaymentStatus } });
+      return [newPayment];
+    });
+
+    res.status(201).json({ success: true, data: payment });
+  } catch (error) { next(error); }
+};
+
+// Get GRN reminders
+export const getGRNReminders = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const shopId = getShopId();
+    const { id } = req.params;
+
+    const existing = await prisma.gRN.findUnique({ where: { id }, select: { id: true, shopId: true } });
+    if (!existing) return res.status(404).json({ success: false, message: 'GRN not found' });
+    if (existing.shopId !== shopId) return res.status(403).json({ success: false, message: 'Access denied' });
+
+    const reminders = await prisma.gRNReminder.findMany({ where: { grnId: id }, orderBy: { sentAt: 'desc' } });
+    res.json({ success: true, data: reminders });
+  } catch (error) { next(error); }
+};
+
+// Create GRN reminder
+export const createGRNReminder = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const shopId = getShopId();
+    const { id } = req.params;
+    const { type, channel, message, supplierPhone, supplierName } = req.body;
+
+    const existing = await prisma.gRN.findUnique({ where: { id }, select: { id: true, shopId: true } });
+    if (!existing) return res.status(404).json({ success: false, message: 'GRN not found' });
+    if (existing.shopId !== shopId) return res.status(403).json({ success: false, message: 'Access denied' });
+
+    const reminder = await prisma.gRNReminder.create({
+      data: { grnId: id, shopId, type: (type || 'PAYMENT').toUpperCase(), channel: channel || 'whatsapp', message, supplierPhone, supplierName },
+    });
+
+    res.status(201).json({ success: true, data: reminder });
+  } catch (error) { next(error); }
+};
+
+// Send GRN email
 export const sendGRNEmail = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const shopId = getShopId();
     const { id } = req.params;
     const { pdfBase64, includeAttachment } = req.body;
-    const shopId = getEffectiveShopId(req);
 
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
-
-    // Find GRN with all related data
     const grn = await prisma.gRN.findFirst({
-      where: {
-        OR: [
-          { id },
-          { grnNumber: id },
-          { grnNumber: id.replace(/^GRN-/, '') },
-        ],
-        shopId,
-      },
-      include: {
-        supplier: true,
-        shop: true,
-        items: {
-          include: {
-            product: {
-              select: { name: true }
-            }
-          }
-        }
-      }
+      where: { OR: [{ id }, { grnNumber: id }, { grnNumber: { contains: id } }], shopId },
+      include: { supplier: true, shop: true, items: { include: { product: true } } },
     });
 
-    if (!grn) {
-      return res.status(404).json({ success: false, message: 'GRN not found' });
-    }
+    if (!grn) return res.status(404).json({ success: false, message: 'GRN not found' });
+    if (!grn.supplier?.email) return res.status(400).json({ success: false, message: 'Supplier does not have an email address' });
 
-    // Check if supplier exists and has email
-    if (!grn.supplier) {
-      return res.status(400).json({ success: false, message: 'GRN has no registered supplier' });
-    }
+    const grnItems = grn.items.map(item => ({
+      productName: item.product?.name || 'Unknown Product',
+      quantity: item.quantity,
+      costPrice: Number(item.costPrice),
+      total: Number(item.totalCost),
+    }));
 
-    if (!grn.supplier.email) {
-      return res.status(400).json({ success: false, message: 'Supplier does not have an email address' });
-    }
-
-    // Prepare email data
     const emailData: GRNEmailData = {
-      email: grn.supplier.email,
-      supplierName: grn.supplier.name,
-      grnNumber: grn.grnNumber,
-      date: grn.date.toLocaleDateString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric'
-      }),
-      items: grn.items.map(item => ({
-        productName: item.product?.name || 'Unknown Product',
-        quantity: item.quantity,
-        costPrice: Number(item.costPrice),
-        total: Number(item.totalCost)
-      })),
-      subtotal: Number(grn.subtotal),
-      tax: Number(grn.tax),
-      discount: Number(grn.discount),
-      totalAmount: Number(grn.totalAmount),
-      paidAmount: Number(grn.paidAmount),
-      balanceDue: Number(grn.totalAmount) - Number(grn.paidAmount),
+      email: grn.supplier.email, supplierName: grn.supplier.name, grnNumber: grn.grnNumber,
+      date: grn.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+      items: grnItems, subtotal: Number(grn.subtotal), tax: Number(grn.tax),
+      discount: Number(grn.discount), totalAmount: Number(grn.totalAmount),
+      paidAmount: Number(grn.paidAmount), balanceDue: Number(grn.totalAmount - grn.paidAmount),
       paymentStatus: grn.paymentStatus,
-      shopName: grn.shop?.name || 'Shop',
-      shopSubName: grn.shop?.subName || undefined,
-      shopAddress: grn.shop?.address || undefined,
-      shopPhone: grn.shop?.phone || undefined,
-      shopEmail: grn.shop?.email || undefined,
-      shopWebsite: grn.shop?.website || undefined,
-      shopLogo: grn.shop?.logo || undefined,
-      notes: grn.notes || undefined,
+      shopName: grn.shop?.name || 'Our Store', shopPhone: grn.shop?.phone || undefined,
+      shopEmail: grn.shop?.email || undefined, shopAddress: grn.shop?.address || undefined,
+      shopWebsite: grn.shop?.website || undefined, notes: grn.notes || undefined,
     };
 
-    // Send email synchronously (sendMailWithRetry has 30s hard timeout per attempt)
-    const emailResult = await sendGRNWithPDF(
-      emailData,
-      includeAttachment ? pdfBase64 : undefined
-    );
+    const shouldIncludePdf = includeAttachment !== false && !!pdfBase64;
+    const result = await sendGRNWithPDF(emailData, shouldIncludePdf ? pdfBase64 : undefined);
 
-    if (!emailResult.success) {
-      return res.status(500).json({
-        success: false,
-        message: `Failed to send email: ${emailResult.error || 'Unknown error'}`,
-      });
+    if (!result.success) {
+      return res.status(500).json({ success: false, message: `Failed to send email: ${result.error || 'Unknown error'}` });
     }
 
-    console.log(`✅ GRN email sent to ${grn.supplier.email} for GRN #${grn.grnNumber}`);
+    res.status(200).json({ success: true, message: 'GRN email sent successfully', data: { messageId: result.messageId, sentTo: grn.supplier.email, grnNumber: grn.grnNumber } });
+  } catch (error) { next(error); }
+};
 
-    res.status(200).json({
-      success: true,
-      message: 'GRN email sent successfully',
-      data: {
-        sentTo: grn.supplier.email,
-        grnNumber: grn.grnNumber,
-        messageId: emailResult.messageId,
-        hasPdfAttachment: !!(includeAttachment && pdfBase64),
-      },
-    });
-
-  } catch (error) {
-    next(error);
-  }
-};/**
- * Generate GRN PDF
- * GET /api/v1/grns/:id/pdf
- */
-export const generateGRNPDFController = async (req: AuthRequest, res: Response, next: NextFunction) => {
+// Download GRN PDF
+export const downloadGRNPDF = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const shopId = getEffectiveShopId(req);
+    const shopId = getShopId();
     const { id } = req.params;
-    
-    if (!shopId) {
-      return res.status(403).json({ success: false, message: 'Shop access required' });
-    }
 
-    // Fetch GRN with all necessary relations
     const grn = await prisma.gRN.findFirst({
-      where: {
-        OR: [
-          { id },
-          { grnNumber: id },
-          { grnNumber: id.replace(/^GRN-/, '') },
-        ],
-        shopId,
-      },
-      include: {
-        supplier: true,
-        items: {
-          include: {
-            product: {
-              include: {
-                category: true,
-              },
-            },
-          },
-        },
-        shop: true,
-      },
+      where: { OR: [{ id }, { grnNumber: id }, { grnNumber: { contains: id } }], shopId },
+      include: { supplier: true, shop: true, items: { include: { product: true } } },
     });
-    
-    if (!grn) {
-      return res.status(404).json({ success: false, message: 'GRN not found' });
-    }
 
-    // Prepare GRN PDF data
+    if (!grn) return res.status(404).json({ success: false, message: 'GRN not found' });
+
+    const totalQuantity = grn.items.reduce((sum, item) => sum + item.quantity, 0);
+
     const pdfData: GRNPDFData = {
-      grnNumber: grn.grnNumber,
-      supplierName: grn.supplier.name,
-      supplierEmail: grn.supplier.email || undefined,
-      supplierPhone: grn.supplier.phone || undefined,
-      supplierAddress: grn.supplier.address || undefined,
+      grnNumber: grn.grnNumber, supplierName: grn.supplier.name, supplierPhone: grn.supplier.phone || undefined,
       orderDate: grn.date.toISOString(),
-      expectedDeliveryDate: grn.expectedDate?.toISOString() || grn.date.toISOString(),
-      receivedDate: grn.receivedDate?.toISOString() || new Date().toISOString(),
+      expectedDeliveryDate: grn.expectedDate?.toISOString() || '',
+      receivedDate: grn.receivedDate?.toISOString() || '',
       deliveryNote: grn.deliveryNote || undefined,
       receivedBy: grn.receivedBy || undefined,
       vehicleNumber: grn.vehicleNumber || undefined,
       status: grn.status.toLowerCase() as 'completed' | 'partial' | 'pending' | 'rejected',
       paymentStatus: grn.paymentStatus.toLowerCase() as 'paid' | 'unpaid' | 'partial',
-      paymentMethod: undefined,
-      items: grn.items.map((item) => ({
+      items: grn.items.map(item => ({
         productName: item.product?.name || 'Unknown Product',
-        category: item.product?.category?.name || undefined,
         unitPrice: Number(item.costPrice),
-        originalUnitPrice: undefined,
         orderedQuantity: item.quantity,
         receivedQuantity: item.quantity,
         acceptedQuantity: item.quantity,
         rejectedQuantity: 0,
         totalAmount: Number(item.totalCost),
-        sellingPrice: item.sellingPrice ? Number(item.sellingPrice) : undefined,
-        discountType: undefined,
-        discountValue: undefined,
       })),
-      totalOrderedQuantity: grn.items.reduce((sum, item) => sum + item.quantity, 0),
-      totalReceivedQuantity: grn.items.reduce((sum, item) => sum + item.quantity, 0),
-      totalAcceptedQuantity: grn.items.reduce((sum, item) => sum + item.quantity, 0),
+      totalOrderedQuantity: totalQuantity,
+      totalReceivedQuantity: totalQuantity,
+      totalAcceptedQuantity: totalQuantity,
       totalRejectedQuantity: 0,
-      subtotal: Number(grn.subtotal),
-      totalDiscount: grn.discount ? Number(grn.discount) : undefined,
-      discountAmount: Number(grn.discount),
-      taxAmount: Number(grn.tax),
-      totalAmount: Number(grn.totalAmount),
-      paidAmount: grn.paidAmount ? Number(grn.paidAmount) : undefined,
+      subtotal: Number(grn.subtotal), discountAmount: Number(grn.discount),
+      taxAmount: Number(grn.tax), totalAmount: Number(grn.totalAmount),
+      paidAmount: Number(grn.paidAmount),
       notes: grn.notes || undefined,
-      // Shop branding
-      shopName: grn.shop.name,
-      shopSubName: grn.shop.subName || undefined,
-      shopAddress: grn.shop.address || undefined,
-      shopPhone: grn.shop.phone || undefined,
-      shopEmail: grn.shop.email || undefined,
-      shopLogo: grn.shop.logo || undefined,
+      shopName: grn.shop?.name || 'Shop', shopSubName: grn.shop?.subName || undefined,
+      shopAddress: grn.shop?.address || undefined, shopPhone: grn.shop?.phone || undefined,
+      shopEmail: grn.shop?.email || undefined, shopLogo: grn.shop?.logo || undefined,
     };
 
-    // Generate PDF
     const pdfBuffer = await generateGRNPDF(pdfData);
-    
-    // Set response headers for PDF download
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${grn.grnNumber}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="GRN-${grn.grnNumber}.pdf"`);
     res.send(pdfBuffer);
-  } catch (error) {
-    next(error);
-  }
+  } catch (error) { next(error); }
 };

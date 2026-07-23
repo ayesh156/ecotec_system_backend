@@ -186,7 +186,13 @@ export const corsConfig = {
   getAllowedOrigins: (): (string | RegExp)[] => {
     const origins: (string | RegExp)[] = [];
 
-    // Add frontend URL from environment
+    // Parse ALLOWED_ORIGINS from comma-separated env var (supports both dev & prod)
+    if (process.env.ALLOWED_ORIGINS) {
+      const parsed = process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean);
+      origins.push(...parsed);
+    }
+
+    // Add frontend URL from environment (legacy support)
     if (process.env.FRONTEND_URL) {
       origins.push(process.env.FRONTEND_URL);
     }
@@ -200,9 +206,12 @@ export const corsConfig = {
       );
     }
 
-    // Production: Allow Render deployments
+    // Production: Allow Render & Contabo VPS deployments
     if (getIsProduction()) {
       origins.push(/\.onrender\.com$/);
+      origins.push(/\.ecosystemlk\.tech$/);
+      origins.push(/\.ecosystemlk\.app$/);
+      origins.push(/\.ecotec\.lk$/);
     }
 
     return origins;
