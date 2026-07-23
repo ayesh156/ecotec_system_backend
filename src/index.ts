@@ -92,29 +92,15 @@ function isOriginAllowed(origin: string | undefined): boolean {
   if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
   if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
 
-  // 2. Safely match the production Ecotec domain
   if (/^https:\/\/ecotec\.ecosystemlk\.app\/?$/i.test(origin)) return true;
   if (/^https:\/\/api\.ecotec\.ecosystemlk\.app\/?$/i.test(origin)) return true;
   if (/\.ecosystemlk\.app$/i.test(origin)) return true;
-
-  // 3. Fallback evaluation for custom CORS_ORIGIN environment declarations
-  const envOrigin = process.env.CORS_ORIGIN || process.env.FRONTEND_URL;
-  if (envOrigin) {
-    const cleanEnv = envOrigin.replace(/\/$/, '');
-    const cleanOrigin = origin.replace(/\/$/, '');
-    if (cleanEnv.toLowerCase() === cleanOrigin.toLowerCase()) return true;
-  }
-
   return false;
 }
 
-/**
- * Early-stage middleware that handles CORS headers and OPTIONS preflight.
- */
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
-  // Inform downstream caches that the response varies by Origin
   res.setHeader('Vary', 'Origin');
 
   if (origin && isOriginAllowed(origin)) {
@@ -122,25 +108,15 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
   } else {
-    res.setHeader(
-      'Access-Control-Allow-Origin',
-      'https://ecotec.ecosystemlk.app',
-    );
+    res.setHeader('Access-Control-Allow-Origin', 'https://ecotec.ecosystemlk.app');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
   }
 
-  // ── OPTIONS preflight — respond immediately ──
   if (req.method === 'OPTIONS') {
-    res.setHeader(
-      'Access-Control-Allow-Methods',
-      'GET, POST, PUT, DELETE, PATCH, OPTIONS',
-    );
-    res.setHeader(
-      'Access-Control-Allow-Headers',
-      'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires',
-    );
-    res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
+    res.setHeader('Access-Control-Max-Age', '86400');
     return res.status(204).end();
   }
 
