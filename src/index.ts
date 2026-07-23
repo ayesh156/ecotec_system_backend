@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
@@ -29,7 +28,6 @@ import { errorHandler } from './middleware/errorHandler';
 import { notFound } from './middleware/notFound';
 import { apiRateLimiter } from './middleware/rateLimiter';
 import { sanitizeRequestBody } from './middleware/validation';
-import { corsConfig } from './config/security';
 import { connectWithRetry, isDbConnected, dbReady } from './lib/prisma';
 
 // Route imports
@@ -55,7 +53,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 // Enables correct client IP detection for rate limiting
 // ===================================
 if (isProduction) {
-  app.set('trust proxy', 1);
+  app.set('trust proxy', true);
   console.log('🔒 Trust proxy enabled for production (reverse proxy detected)');
 }
 
@@ -88,26 +86,49 @@ app.use(helmet({
 // 3. Cookie parser - Required for refresh token cookies
 app.use(cookieParser());
 
-// 4. CORS configuration - Using secure config module with OPTIONS preflight support
+// 4. CORS configuration - Bulletproof Dynamic CORS & Preflight Configuration
+// Replaces external cors package with native Express middleware for full control.
 
-// 4a. Strip any CORS headers injected upstream (e.g. by OpenLiteSpeed / a proxy layer)
-// BEFORE Express's own cors middleware runs. Without this, if the proxy also sets
-// Access-Control-Allow-Origin, the browser sees two comma-joined values and rejects
-// the response with: "Access-Control-Allow-Origin header contains multiple values".
-app.use((_req, res, next) => {
-  res.removeHeader('Access-Control-Allow-Origin');
-  res.removeHeader('Access-Control-Allow-Credentials');
+function isOriginAllowed(origin?: string): boolean {
+  if (!origin) return false;
+  if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
+  if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
+  if (/^https:\/\/ecotec\.ecosystemlk\.app\/?$/i.test(origin)) return true;
+  if (/^https:\/\/api\.ecotec\.ecosystemlk\.app\/?$/i.test(origin)) return true;
+  if (/\.ecosystemlk\.app$/i.test(origin)) return true;
+  return false;
+}
+
+/**
+ * Custom CORS Middleware Layer - Eliminates duplicate headers and preflight dropouts
+ */
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  // Inform downstream proxies/caches that response varies by Origin
+  res.setHeader('Vary', 'Origin');
+
+  if (origin && isOriginAllowed(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
+  } else {
+    // Proxy handshakes fallback
+    res.setHeader('Access-Control-Allow-Origin', 'https://ecotec.ecosystemlk.app');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
+  }
+
+  // ── OPTIONS Preflight Handling ──
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
+    res.setHeader('Access-Control-Max-Age', '86400'); // 24 Hours cache
+    return res.status(204).end();
+  }
+
   next();
 });
-
-app.use(cors({
-  origin: corsConfig.validateOrigin,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'Cache-Control', 'Pragma', 'Expires'],
-  exposedHeaders: ['set-cookie', 'X-Request-ID', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
-  maxAge: 86400, // Cache preflight for 24 hours
-}));
 
 // 5. Gzip Compression - Compresses responses > 1 KB
 // Must be registered BEFORE body parsers and route handlers
