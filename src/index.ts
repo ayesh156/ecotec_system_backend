@@ -98,23 +98,13 @@ function isOriginAllowed(origin?: string): boolean {
 }
 
 /**
- * Custom CORS Middleware Layer - Clean Single Header Delivery
+ * Custom CORS Middleware Layer - Proxy Layer handles Access-Control-Allow-Origin
+ * Express MUST NOT send Access-Control-Allow-Origin or Access-Control-Allow-Credentials 
+ * here to avoid header duplication on OpenLiteSpeed proxy responses.
  */
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-
   // Inform downstream proxies/caches that response varies by Origin
   res.setHeader('Vary', 'Origin');
-
-  if (origin && isOriginAllowed(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', 'https://ecotec.ecosystemlk.app');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
-  }
 
   // ── OPTIONS Preflight Handling ──
   if (req.method === 'OPTIONS') {
