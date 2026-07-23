@@ -85,47 +85,62 @@ app.use(helmet({
 app.use(cookieParser());
 
 // 4. CORS configuration - Custom CORS middleware
-function isOriginAllowed(origin?: string): boolean {
+function isOriginAllowed(origin: string | undefined): boolean {
   if (!origin) return false;
+
+  // 1. Whitelist all variants of localhost and 127.0.0.1 (any port, http/https)
   if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
   if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
+
+  // 2. Safely match the production Ecotec domain
   if (/^https:\/\/ecotec\.ecosystemlk\.app\/?$/i.test(origin)) return true;
   if (/^https:\/\/api\.ecotec\.ecosystemlk\.app\/?$/i.test(origin)) return true;
   if (/\.ecosystemlk\.app$/i.test(origin)) return true;
+
+  // 3. Fallback evaluation for custom CORS_ORIGIN environment declarations
+  const envOrigin = process.env.CORS_ORIGIN || process.env.FRONTEND_URL;
+  if (envOrigin) {
+    const cleanEnv = envOrigin.replace(/\/$/, '');
+    const cleanOrigin = origin.replace(/\/$/, '');
+    if (cleanEnv.toLowerCase() === cleanOrigin.toLowerCase()) return true;
+  }
+
   return false;
 }
 
 /**
- * Sets a header value cleanly, removing any prior value first (whether set by
- * an earlier middleware, an upstream proxy that leaked a header through, or
- * this same middleware firing more than once on the response). setHeader()
- * alone normally overwrites, but if anything upstream used append() or if this
- * middleware is invoked twice on the same response, values can accumulate into
- * a comma-separated duplicate (e.g. "origin, origin"). removeHeader() first
- * guarantees a single clean value every time.
- */
-function setHeaderClean(res: express.Response, name: string, value: string): void {
-  res.removeHeader(name);
-  res.setHeader(name, value);
-}
-
-/**
- * Custom CORS Middleware - Handles dynamic origin validation and preflight requests.
- * Sets appropriate CORS headers based on the request origin.
+ * Early-stage middleware that handles CORS headers and OPTIONS preflight.
  */
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  setHeaderClean(res, 'Vary', 'Origin');
 
-  const allowedOrigin = origin && isOriginAllowed(origin) ? origin : 'https://ecotec.ecosystemlk.app';
-  setHeaderClean(res, 'Access-Control-Allow-Origin', allowedOrigin);
-  setHeaderClean(res, 'Access-Control-Allow-Credentials', 'true');
-  setHeaderClean(res, 'Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
+  // Inform downstream caches that the response varies by Origin
+  res.setHeader('Vary', 'Origin');
 
+  if (origin && isOriginAllowed(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
+  } else {
+    res.setHeader(
+      'Access-Control-Allow-Origin',
+      'https://ecotec.ecosystemlk.app',
+    );
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
+  }
+
+  // ── OPTIONS preflight — respond immediately ──
   if (req.method === 'OPTIONS') {
-    setHeaderClean(res, 'Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    setHeaderClean(res, 'Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
-    setHeaderClean(res, 'Access-Control-Max-Age', '86400');
+    res.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+    );
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires',
+    );
+    res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
     return res.status(204).end();
   }
 
