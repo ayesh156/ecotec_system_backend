@@ -59,6 +59,33 @@ console.log(`🔒 Trust proxy set to 1 (single reverse proxy hop trusted, ${isPr
 // SECURITY MIDDLEWARE - Order matters!
 // ===================================
 
+// 0. HEADER DE-DUPLICATION GUARD
+// Some environments (reverse proxies, load balancers, or duplicate middleware
+// execution) can cause a header to end up with two comma-separated values by
+// the time the response is actually flushed to the socket. This guard hooks
+// res.writeHead (the point where headers are actually sent) and collapses
+// Access-Control-Allow-Origin (and Vary) down to a single value if it was
+// somehow set/appended more than once. This is a last-line-of-defense fix and
+// does not require any new npm package.
+app.use((req, res, next) => {
+  const originalWriteHead = res.writeHead.bind(res);
+  (res as any).writeHead = function (...args: any[]) {
+    const dedupe = (name: string) => {
+      const val = res.getHeader(name);
+      if (val) {
+        const first = Array.isArray(val)
+          ? String(val[0])
+          : String(val).split(',')[0];
+        res.setHeader(name, first.trim());
+      }
+    };
+    dedupe('Access-Control-Allow-Origin');
+    dedupe('Vary');
+    return originalWriteHead(...args);
+  };
+  next();
+});
+
 // 1. Request ID for tracing (NIST AU-3)
 app.use((req, _res, next) => {
   (req as any).requestId = req.headers['x-request-id'] || crypto.randomUUID();
