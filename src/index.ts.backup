@@ -97,27 +97,21 @@ function isOriginAllowed(origin: string | undefined): boolean {
   return false;
 }
 
+// 4. CORS configuration - Express DOES NOT send CORS headers
+// OpenLiteSpeed Proxy Layer handles the Access-Control-Allow-Origin header exclusively.
 // 4. CORS configuration
-// setHeaderClean() removes any existing value for a header before setting it,
-// so this middleware can NEVER emit a duplicate value for a given header no
-// matter how many times it (or anything else touching the response) fires.
-function setHeaderClean(res: express.Response, name: string, value: string): void {
-  res.removeHeader(name);
-  res.setHeader(name, value);
-}
-
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
-  setHeaderClean(res, 'Vary', 'Origin');
-  setHeaderClean(res, 'Access-Control-Allow-Origin', (origin && isOriginAllowed(origin)) ? origin : 'https://ecotec.ecosystemlk.app');
-  setHeaderClean(res, 'Access-Control-Allow-Credentials', 'true');
-  setHeaderClean(res, 'Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Origin', origin || 'https://ecotec.ecosystemlk.app');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
 
   if (req.method === 'OPTIONS') {
-    setHeaderClean(res, 'Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    setHeaderClean(res, 'Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
-    setHeaderClean(res, 'Access-Control-Max-Age', '86400');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
+    res.setHeader('Access-Control-Max-Age', '86400');
     return res.status(204).end();
   }
 
