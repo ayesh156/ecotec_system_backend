@@ -134,13 +134,48 @@ const PRODUCTS_DATA = [
 ];
 
 const CUSTOMERS_DATA = [
-  { name: 'Kamal Perera', email: 'kamal.perera@gmail.com', phone: '0771234567', address: 'No. 45, Galle Road, Colombo 03', nic: '901234567V', type: 'REGULAR' as CustomerType },
-  { name: 'Nimal Silva', email: 'nimal.silva@yahoo.com', phone: '0712345678', address: 'No. 123, Main Street, Kandy', nic: '851234568V', type: 'REGULAR' as CustomerType },
-  { name: 'ABC Computers', email: 'info@abccomputers.lk', phone: '0114567890', address: 'No. 234, Duplication Road, Colombo 03', nic: null, type: 'WHOLESALE' as CustomerType },
-  { name: 'Lanka Insurance PLC', email: 'it@lankainsurance.lk', phone: '0118901234', address: 'No. 123, Union Place, Colombo 02', nic: null, type: 'CORPORATE' as CustomerType },
-  { name: 'Dr. Saman Wickramasinghe', email: 'dr.saman@gmail.com', phone: '0779876543', address: 'No. 12, Ward Place, Colombo 07', nic: '751234572V', type: 'VIP' as CustomerType },
-  { name: 'Chaminda Rathnayake', email: 'chaminda.r@gmail.com', phone: '0767654321', address: 'No. 67, Station Road, Moratuwa', nic: '911234574V', type: 'REGULAR' as CustomerType },
-  { name: 'Sanduni Herath', email: 'sanduni.h@outlook.com', phone: '0756543210', address: 'No. 98, Main Street, Panadura', nic: '961234575V', type: 'REGULAR' as CustomerType },
+  {
+    name: 'Kamal Perera', email: 'kamal.perera@gmail.com', phone: '0771234567',
+    address: 'No. 45, Galle Road, Colombo 03', nic: '901234567V', type: 'REGULAR' as CustomerType,
+    totalSpent: 425000, totalOrders: 7, lastPurchase: new Date('2026-07-28'),
+    creditBalance: 0, creditLimit: 0, creditStatus: 'CLEAR' as CreditStatus,
+  },
+  {
+    name: 'Nimal Silva', email: 'nimal.silva@yahoo.com', phone: '0712345678',
+    address: 'No. 123, Main Street, Kandy', nic: '851234568V', type: 'REGULAR' as CustomerType,
+    totalSpent: 185000, totalOrders: 3, lastPurchase: new Date('2026-08-02'),
+    creditBalance: 0, creditLimit: 0, creditStatus: 'CLEAR' as CreditStatus,
+  },
+  {
+    name: 'ABC Computers', email: 'info@abccomputers.lk', phone: '0114567890',
+    address: 'No. 234, Duplication Road, Colombo 03', nic: null, type: 'WHOLESALE' as CustomerType,
+    totalSpent: 1850000, totalOrders: 24, lastPurchase: new Date('2026-08-10'),
+    creditBalance: 250000, creditLimit: 500000, creditStatus: 'ACTIVE' as CreditStatus,
+  },
+  {
+    name: 'Lanka Insurance PLC', email: 'it@lankainsurance.lk', phone: '0118901234',
+    address: 'No. 123, Union Place, Colombo 02', nic: null, type: 'CORPORATE' as CustomerType,
+    totalSpent: 3400000, totalOrders: 12, lastPurchase: new Date('2026-07-15'),
+    creditBalance: 1200000, creditLimit: 2000000, creditStatus: 'ACTIVE' as CreditStatus,
+  },
+  {
+    name: 'Dr. Saman Wickramasinghe', email: 'dr.saman@gmail.com', phone: '0779876543',
+    address: 'No. 12, Ward Place, Colombo 07', nic: '751234572V', type: 'VIP' as CustomerType,
+    totalSpent: 875000, totalOrders: 9, lastPurchase: new Date('2026-08-18'),
+    creditBalance: 0, creditLimit: 100000, creditStatus: 'CLEAR' as CreditStatus,
+  },
+  {
+    name: 'Chaminda Rathnayake', email: 'chaminda.r@gmail.com', phone: '0767654321',
+    address: 'No. 67, Station Road, Moratuwa', nic: '911234574V', type: 'REGULAR' as CustomerType,
+    totalSpent: 95000, totalOrders: 2, lastPurchase: new Date('2026-06-20'),
+    creditBalance: 45000, creditLimit: 50000, creditStatus: 'OVERDUE' as CreditStatus,
+  },
+  {
+    name: 'Sanduni Herath', email: 'sanduni.h@outlook.com', phone: '0756543210',
+    address: 'No. 98, Main Street, Panadura', nic: '961234575V', type: 'REGULAR' as CustomerType,
+    totalSpent: 320000, totalOrders: 5, lastPurchase: new Date('2026-08-12'),
+    creditBalance: 0, creditLimit: 0, creditStatus: 'CLEAR' as CreditStatus,
+  },
 ];
 
 const SUPPLIERS_DATA = [
@@ -424,6 +459,12 @@ async function main() {
           address: c.address || undefined,
           nic: c.nic || undefined,
           customerType: c.type,
+          totalSpent: c.totalSpent,
+          totalOrders: c.totalOrders,
+          lastPurchase: c.lastPurchase,
+          creditBalance: c.creditBalance,
+          creditLimit: c.creditLimit,
+          creditStatus: c.creditStatus,
         },
       });
     } else {
@@ -436,9 +477,12 @@ async function main() {
           nic: c.nic || undefined,
           customerType: c.type,
           shopId: shop.id,
-          creditBalance: 0,
-          creditLimit: c.type === 'WHOLESALE' ? 50000 : 0,
-          creditStatus: 'CLEAR' as CreditStatus,
+          totalSpent: c.totalSpent,
+          totalOrders: c.totalOrders,
+          lastPurchase: c.lastPurchase,
+          creditBalance: c.creditBalance,
+          creditLimit: c.creditLimit,
+          creditStatus: c.creditStatus,
         },
       });
     }

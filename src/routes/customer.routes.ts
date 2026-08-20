@@ -29,13 +29,17 @@ router.get('/', async (req, res, next) => {
     const shopId = getShopId();
     const { search, page = '1', limit = '20' } = req.query;
 
+    // NOTE: Prisma's `mode: 'insensitive'` is only supported on PostgreSQL and
+    // throws a runtime error on MySQL. MySQL's default utf8mb4_unicode_ci
+    // collation already performs case-insensitive matching for `contains`,
+    // so we use the plain form which works on both providers.
     const where: any = { shopId };
     if (search && typeof search === 'string') {
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search } },
         { phone: { contains: search } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { nic: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search } },
+        { nic: { contains: search } },
       ];
     }
 
