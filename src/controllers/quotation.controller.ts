@@ -104,18 +104,24 @@ export const getAllQuotations = async (req: Request, res: Response, next: NextFu
 };
 
 // GET /api/v1/quotations/:id
+// Supports lookup by database primary key (cuid) OR formatted quotationNumber (e.g. QUO-2026-0005)
 export const getQuotationById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const shopId = getShopId();
 
-    const quotation = await prisma.quotation.findUnique({
-      where: { id },
+    const quotation = await prisma.quotation.findFirst({
+      where: {
+        shopId,
+        OR: [
+          { id },
+          { quotationNumber: id },
+        ],
+      },
       include: { customer: true, items: { include: { product: true } }, createdBy: { select: { id: true, name: true, email: true } } },
     });
 
     if (!quotation) throw new AppError(`Quotation not found with ID: ${id}`, 404);
-    if (quotation.shopId !== shopId) throw new AppError('You do not have permission to access this quotation', 403);
 
     res.json({ success: true, data: quotation });
   } catch (error) {
@@ -188,14 +194,21 @@ export const createQuotation = async (req: AuthRequest, res: Response, next: Nex
 };
 
 // PUT /api/v1/quotations/:id
+// Supports lookup by database primary key (cuid) OR formatted quotationNumber
 export const updateQuotation = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const shopId = getShopId();
     const { customerId, items, status, discountTotal, taxTotal, validityDate, notes, terms } = req.body;
 
-    const existingQuotation = await prisma.quotation.findUnique({
-      where: { id },
+    const existingQuotation = await prisma.quotation.findFirst({
+      where: {
+        shopId,
+        OR: [
+          { id },
+          { quotationNumber: id },
+        ],
+      },
       include: { items: true },
     });
 
@@ -277,12 +290,21 @@ export const updateQuotation = async (req: AuthRequest, res: Response, next: Nex
 };
 
 // DELETE /api/v1/quotations/:id
+// Supports lookup by database primary key (cuid) OR formatted quotationNumber
 export const deleteQuotation = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const shopId = getShopId();
 
-    const quotation = await prisma.quotation.findUnique({ where: { id } });
+    const quotation = await prisma.quotation.findFirst({
+      where: {
+        shopId,
+        OR: [
+          { id },
+          { quotationNumber: id },
+        ],
+      },
+    });
     if (!quotation) throw new AppError(`Quotation not found with ID: ${id}`, 404);
     if (quotation.shopId !== shopId) throw new AppError('You do not have permission to delete this quotation', 403);
 

@@ -69,7 +69,7 @@ console.log(`🔒 Trust proxy set to 1 (single reverse proxy hop trusted, ${isPr
 // somehow set/appended more than once. This is a last-line-of-defense fix and
 // does not require any new npm package.
 app.use((req, res, next) => {
-  const originalWriteHead = res.writeHead.bind(res);
+  const originalWriteHead = res.writeHead.bind(res) as (...args: any[]) => void;
   (res as any).writeHead = function (...args: any[]) {
     const dedupe = (name: string) => {
       const val = res.getHeader(name);
