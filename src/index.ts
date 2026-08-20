@@ -33,6 +33,7 @@ import { connectWithRetry, isDbConnected, dbReady } from './lib/prisma';
 // Route imports
 import authRoutes from './routes/auth.routes';
 import invoiceRoutes from './routes/invoice.routes';
+import quotationRoutes from './routes/quotation.routes';
 import customerRoutes from './routes/customer.routes';
 import productRoutes from './routes/product.routes';
 import categoryRoutes from './routes/category.routes';
@@ -1134,6 +1135,7 @@ app.use(`${API_PREFIX}/grns`, (req, res, next) => {
 // Routes
 app.use(`${API_PREFIX}/auth`, authRoutes);
 app.use(`${API_PREFIX}/invoices`, invoiceRoutes);
+app.use(`${API_PREFIX}/quotations`, quotationRoutes);
 app.use(`${API_PREFIX}/customers`, customerRoutes);
 app.use(`${API_PREFIX}/products`, productRoutes);
 app.use(`${API_PREFIX}/categories`, categoryRoutes);
