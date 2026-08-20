@@ -1,8 +1,13 @@
 /**
- * 🌱 EcoSystem Database Seed (Single-Shop Mode)
- * ==============================================
+ * 🌱 EcoSystem Database Seed (Single-Shop Mode) - ZERO DATA LOSS SAFE
+ * ===================================================================
  * Seeds a single default shop with sample data.
  * Uses DEFAULT_SHOP_ID from environment.
+ *
+ * SAFETY POLICY:
+ * - NO deleteMany() calls - existing records are NEVER deleted
+ * - Uses upsert/findFirst+update patterns based on unique constraints
+ * - Existing customers, products, invoices, settings remain untouched
  */
 
 import dotenv from 'dotenv';
@@ -21,16 +26,12 @@ for (const envPath of envPaths) {
   }
 }
 
-import { 
-  PrismaClient, 
-  InvoiceStatus, 
-  PaymentMethod, 
-  CreditStatus, 
-  SalesChannel, 
+import {
+  PrismaClient,
+  CreditStatus,
   CustomerType,
-  StockMovementType,
-  GRNStatus,
-  PaymentStatus,
+  QuotationStatus,
+  QuotationItemType,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -63,22 +64,20 @@ async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, CONFIG.BCRYPT_ROUNDS);
 }
 
-function randomDate(start: Date, end: Date): Date {
-  return new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
+function addMonths(date: Date, months: number): Date {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + months);
+  return d;
 }
 
-function generateInvoiceNumber(index: number, year: number = 2026): string {
-  return `INV-${year}-${String(index).padStart(4, '0')}`;
+function addDays(date: Date, days: number): Date {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
 }
 
-function generateGRNNumber(index: number, year: number = 2026): string {
-  return `GRN-${year}-${String(index).padStart(4, '0')}`;
-}
-
-function getWarrantyDueDate(warrantyMonths: number): Date {
-  const date = new Date();
-  date.setMonth(date.getMonth() + warrantyMonths);
-  return date;
+function generateQuotationNumber(index: number, year: number = 2026): string {
+  return `QUO-${year}-${String(index).padStart(4, '0')}`;
 }
 
 // ==========================================
@@ -151,44 +150,122 @@ const SUPPLIERS_DATA = [
   { name: 'Redington Lanka', contactPerson: 'Ajith Bandara', email: 'ajith@redington.lk', phone: '0116789012', address: 'No. 789, Nawala Road, Rajagiriya' },
 ];
 
+// ==========================================
+// SAMPLE QUOTATIONS DATA (across all statuses)
+// ==========================================
+
+interface SeedQuotationItem {
+  itemType: QuotationItemType;
+  productName: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  discount: number;
+}
+
+interface SeedQuotation {
+  quotationNumber: string;
+  customerIndex: number; // index into CUSTOMERS_DATA
+  status: QuotationStatus;
+  discountTotal: number;
+  taxTotal: number;
+  validityDays: number;
+  notes: string;
+  terms: string;
+  items: SeedQuotationItem[];
+}
+
+const QUOTATIONS_DATA: SeedQuotation[] = [
+  {
+    quotationNumber: generateQuotationNumber(1),
+    customerIndex: 0, // Kamal Perera
+    status: 'DRAFT',
+    discountTotal: 0,
+    taxTotal: 0,
+    validityDays: 30,
+    notes: 'Draft quotation - awaiting customer feedback on configuration.',
+    terms: 'This quotation is valid for 30 days from the date of issue.\nPrices are subject to change without prior notice.\nPayment terms: 50% advance, 50% on delivery.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'HP Pavilion 15', description: 'HP Pavilion 15 laptop with 16GB RAM, 512GB SSD', quantity: 1, unitPrice: 185000, discount: 0 },
+      { itemType: 'PRODUCT', productName: 'Logitech MK270 Combo', description: 'Wireless keyboard and mouse combo', quantity: 1, unitPrice: 8500, discount: 0 },
+      { itemType: 'SERVICE', productName: 'Windows 11 Professional Setup', description: 'OS installation and driver setup service', quantity: 1, unitPrice: 4500, discount: 0 },
+    ],
+  },
+  {
+    quotationNumber: generateQuotationNumber(2),
+    customerIndex: 1, // Nimal Silva
+    status: 'SENT',
+    discountTotal: 5000,
+    taxTotal: 0,
+    validityDays: 30,
+    notes: 'Quotation sent via email to nimal.silva@yahoo.com. Customer requested a discount.',
+    terms: 'This quotation is valid for 30 days from the date of issue.\nPrices are subject to change without prior notice.\nPayment terms: 50% advance, 50% on delivery.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'Dell Inspiron 15', description: 'Dell Inspiron 15 laptop with 8GB RAM, 512GB SSD', quantity: 1, unitPrice: 175000, discount: 2 },
+      { itemType: 'PRODUCT', productName: 'Samsung 970 EVO 500GB SSD', description: 'Extra NVMe SSD for storage upgrade', quantity: 1, unitPrice: 35000, discount: 0 },
+    ],
+  },
+  {
+    quotationNumber: generateQuotationNumber(3),
+    customerIndex: 2, // ABC Computers
+    status: 'ACCEPTED',
+    discountTotal: 15000,
+    taxTotal: 0,
+    validityDays: 30,
+    notes: 'Accepted by ABC Computers purchasing team. Convert to invoice on delivery.',
+    terms: 'This quotation is valid for 30 days from the date of issue.\nBulk pricing applied for wholesale customers.\nPayment terms: Net 30 days after delivery.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'HP EliteBook 840', description: 'HP EliteBook 840 G9 - 2 units for office staff', quantity: 2, unitPrice: 295000, discount: 2 },
+      { itemType: 'PRODUCT', productName: 'LG 27" IPS Monitor', description: '27" LG IPS monitors for workstations', quantity: 2, unitPrice: 65000, discount: 0 },
+    ],
+  },
+  {
+    quotationNumber: generateQuotationNumber(4),
+    customerIndex: 3, // Lanka Insurance PLC
+    status: 'REJECTED',
+    discountTotal: 0,
+    taxTotal: 0,
+    validityDays: 30,
+    notes: 'Rejected by procurement - they selected another vendor with lower pricing.',
+    terms: 'This quotation is valid for 30 days from the date of issue.\nCorporate pricing terms apply.\nPayment terms: Net 30 days after delivery.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'Lenovo ThinkPad X1 Carbon', description: 'Lenovo ThinkPad X1 Carbon - executive laptops', quantity: 5, unitPrice: 425000, discount: 0 },
+      { itemType: 'PRODUCT', productName: 'HP LaserJet Pro M404n', description: 'Network laser printer for office', quantity: 1, unitPrice: 85000, discount: 0 },
+    ],
+  },
+  {
+    quotationNumber: generateQuotationNumber(5),
+    customerIndex: 4, // Dr. Saman Wickramasinghe
+    status: 'CONVERTED',
+    discountTotal: 3000,
+    taxTotal: 0,
+    validityDays: 30,
+    notes: 'Converted to invoice INV-2026-XXXX. Payment received in full.',
+    terms: 'This quotation is valid for 30 days from the date of issue.\nPrices are subject to change without prior notice.\nPayment terms: 50% advance, 50% on delivery.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'Apple iPhone 15', description: 'Apple iPhone 15 128GB - Black', quantity: 1, unitPrice: 385000, discount: 0 },
+      { itemType: 'PRODUCT', productName: 'Logitech MK270 Combo', description: 'Wireless keyboard and mouse combo for home office', quantity: 1, unitPrice: 8500, discount: 5 },
+    ],
+  },
+];
+
 async function main() {
-  console.log('\n╔═══════════════════════════════════╗');
-  console.log('║  🌱 ECOSYSTEM DATABASE SEED        ║');
-  console.log('║     Single-Shop Mode               ║');
-  console.log('╚═══════════════════════════════════╝\n');
+  console.log('\n╔════════════════════════════════════════════╗');
+  console.log('║  🌱 ECOSYSTEM DATABASE SEED                ║');
+  console.log('║     Single-Shop Mode (Zero Data Loss)      ║');
+  console.log('╚════════════════════════════════════════════╝\n');
 
-  // Clean existing data
-  console.log('🧹 Cleaning existing data...');
-  await prisma.invoiceReminder.deleteMany();
-  await prisma.gRNReminder.deleteMany();
-  await prisma.invoiceItemHistory.deleteMany();
-  await prisma.invoicePayment.deleteMany();
-  await prisma.invoiceItem.deleteMany();
-  await prisma.gRNPayment.deleteMany();
-  await prisma.gRNItem.deleteMany();
-  await prisma.stockMovement.deleteMany();
-  await prisma.priceHistory.deleteMany();
-  await prisma.customerPaymentRecord.deleteMany();
-  await prisma.invoice.deleteMany();
-  await prisma.gRN.deleteMany();
-  await prisma.product.deleteMany();
-  await prisma.customer.deleteMany();
-  await prisma.supplier.deleteMany();
-  await prisma.category.deleteMany();
-  await prisma.brand.deleteMany();
-  await prisma.refreshToken.deleteMany();
-  await prisma.passwordResetToken.deleteMany();
-  await prisma.user.deleteMany();
-  await prisma.shop.deleteMany();
-  console.log('   ✅ Database cleaned\n');
-
-  // Create Default Shop
-  console.log('📌 Creating Default Shop...');
+  // ─────────────────────────────────────────────
+  // 1. Default Shop (upsert - never deletes)
+  // ─────────────────────────────────────────────
+  console.log('📌 Ensuring Default Shop...');
   const defaultShopId = CONFIG.DEFAULT_SHOP_ID || undefined;
-  
+
   const shop = await prisma.shop.upsert({
     where: defaultShopId ? { id: defaultShopId } : { slug: CONFIG.SHOP.slug },
-    update: { hiddenSections: DEFAULT_HIDDEN_SECTIONS },
+    update: {
+      hiddenSections: DEFAULT_HIDDEN_SECTIONS,
+    },
     create: {
       ...(defaultShopId && { id: defaultShopId }),
       name: CONFIG.SHOP.name,
@@ -214,73 +291,270 @@ async function main() {
   console.log(`   ✅ Shop: ${shop.name} (${shop.id})`);
   console.log(`   ℹ️  Set DEFAULT_SHOP_ID=${shop.id} in .env\n`);
 
-  // Create Admin User
-  console.log('📌 Creating Admin User...');
+  // ─────────────────────────────────────────────
+  // 2. Admin & Staff Users (upsert - never deletes)
+  // ─────────────────────────────────────────────
+  console.log('📌 Ensuring Users...');
   const adminPassword = await hashPassword(CONFIG.ADMIN.password);
   const admin = await prisma.user.upsert({
     where: { email: CONFIG.ADMIN.email },
-    update: { name: CONFIG.ADMIN.name, password: adminPassword, role: 'ADMIN', shopId: shop.id },
+    update: { name: CONFIG.ADMIN.name, role: 'ADMIN', shopId: shop.id, isActive: true },
     create: { email: CONFIG.ADMIN.email, password: adminPassword, name: CONFIG.ADMIN.name, role: 'ADMIN', shopId: shop.id, isActive: true, lastLogin: new Date() },
   });
   console.log(`   ✅ ADMIN: ${admin.email} / ${CONFIG.ADMIN.password}`);
 
-  // Create additional users
   const staffPassword = await hashPassword('Staff@1234');
   await prisma.user.upsert({
     where: { email: 'staff@ecosystem.lk' },
-    update: { name: 'Shop Staff', password: staffPassword, role: 'STAFF', shopId: shop.id },
+    update: { name: 'Shop Staff', role: 'STAFF', shopId: shop.id, isActive: true },
     create: { email: 'staff@ecosystem.lk', password: staffPassword, name: 'Shop Staff', role: 'STAFF', shopId: shop.id, isActive: true },
   });
   console.log(`   ✅ STAFF: staff@ecosystem.lk / Staff@1234\n`);
 
-  // Seed data
-  const allCategories = await Promise.all(CATEGORIES_DATA.map(cat => 
-    prisma.category.create({ data: { name: cat.name, description: cat.description, image: cat.image, shopId: shop.id } })
-  ));
-  const categoryMap = new Map(allCategories.map(c => [c.name, c.id]));
-  console.log(`   ✅ Created ${allCategories.length} categories`);
+  // ─────────────────────────────────────────────
+  // 3. Categories (upsert on shopId_name)
+  // ─────────────────────────────────────────────
+  console.log('📌 Ensuring Categories...');
+  const categoryMap = new Map<string, string>();
+  let categoryCount = 0;
+  for (const cat of CATEGORIES_DATA) {
+    const category = await prisma.category.upsert({
+      where: { shopId_name: { shopId: shop.id, name: cat.name } },
+      update: { description: cat.description, image: cat.image },
+      create: { name: cat.name, description: cat.description, image: cat.image, shopId: shop.id },
+    });
+    categoryMap.set(cat.name, category.id);
+    categoryCount++;
+  }
+  console.log(`   ✅ Ensured ${categoryCount} categories`);
 
-  const allBrands = await Promise.all(BRANDS_DATA.map(brand =>
-    prisma.brand.create({ data: { name: brand.name, description: brand.description, website: brand.website, shopId: shop.id } })
-  ));
-  const brandMap = new Map(allBrands.map(b => [b.name, b.id]));
-  console.log(`   ✅ Created ${allBrands.length} brands`);
+  // ─────────────────────────────────────────────
+  // 4. Brands (upsert on shopId_name)
+  // ─────────────────────────────────────────────
+  console.log('📌 Ensuring Brands...');
+  const brandMap = new Map<string, string>();
+  let brandCount = 0;
+  for (const brand of BRANDS_DATA) {
+    const b = await prisma.brand.upsert({
+      where: { shopId_name: { shopId: shop.id, name: brand.name } },
+      update: { description: brand.description, website: brand.website },
+      create: { name: brand.name, description: brand.description, website: brand.website, shopId: shop.id },
+    });
+    brandMap.set(brand.name, b.id);
+    brandCount++;
+  }
+  console.log(`   ✅ Ensured ${brandCount} brands`);
 
-  const products = await Promise.all(PRODUCTS_DATA.map(p =>
-    prisma.product.create({
-      data: {
-        name: p.name, price: p.price, costPrice: p.costPrice, stock: p.stock,
-        warranty: p.warranty, warrantyMonths: p.warrantyMonths,
-        image: p.image,
-        categoryId: categoryMap.get(p.category), brandId: brandMap.get(p.brand), shopId: shop.id,
-        totalPurchased: p.stock, totalSold: 0,
+  // ─────────────────────────────────────────────
+  // 5. Products (findFirst by name+shopId then update/create)
+  // ─────────────────────────────────────────────
+  console.log('📌 Ensuring Products...');
+  let productCount = 0;
+  for (const p of PRODUCTS_DATA) {
+    const existing = await prisma.product.findFirst({
+      where: { name: p.name, shopId: shop.id },
+    });
+    const categoryId = categoryMap.get(p.category);
+    const brandId = brandMap.get(p.brand);
+    if (existing) {
+      await prisma.product.update({
+        where: { id: existing.id },
+        data: {
+          price: p.price,
+          costPrice: p.costPrice,
+          warranty: p.warranty,
+          warrantyMonths: p.warrantyMonths,
+          image: p.image,
+          categoryId,
+          brandId,
+        },
+      });
+    } else {
+      await prisma.product.create({
+        data: {
+          name: p.name,
+          price: p.price,
+          costPrice: p.costPrice,
+          stock: p.stock,
+          warranty: p.warranty,
+          warrantyMonths: p.warrantyMonths,
+          image: p.image,
+          categoryId,
+          brandId,
+          shopId: shop.id,
+          totalPurchased: p.stock,
+          totalSold: 0,
+        },
+      });
+    }
+    productCount++;
+  }
+  console.log(`   ✅ Ensured ${productCount} products`);
+
+  // ─────────────────────────────────────────────
+  // 6. Suppliers (upsert on shopId_name)
+  // ─────────────────────────────────────────────
+  console.log('📌 Ensuring Suppliers...');
+  let supplierCount = 0;
+  for (const s of SUPPLIERS_DATA) {
+    await prisma.supplier.upsert({
+      where: { shopId_name: { shopId: shop.id, name: s.name } },
+      update: { contactPerson: s.contactPerson, email: s.email, phone: s.phone, address: s.address },
+      create: { name: s.name, contactPerson: s.contactPerson, email: s.email, phone: s.phone, address: s.address, shopId: shop.id },
+    });
+    supplierCount++;
+  }
+  console.log(`   ✅ Ensured ${supplierCount} suppliers`);
+
+  // ─────────────────────────────────────────────
+  // 7. Customers (findFirst by phone+shopId then update/create)
+  // ─────────────────────────────────────────────
+  console.log('📌 Ensuring Customers...');
+  let customerCount = 0;
+  for (const c of CUSTOMERS_DATA) {
+    const existing = await prisma.customer.findFirst({
+      where: { phone: c.phone, shopId: shop.id },
+    });
+    if (existing) {
+      await prisma.customer.update({
+        where: { id: existing.id },
+        data: {
+          name: c.name,
+          email: c.email || undefined,
+          address: c.address || undefined,
+          nic: c.nic || undefined,
+          customerType: c.type,
+        },
+      });
+    } else {
+      await prisma.customer.create({
+        data: {
+          name: c.name,
+          email: c.email || undefined,
+          phone: c.phone,
+          address: c.address || undefined,
+          nic: c.nic || undefined,
+          customerType: c.type,
+          shopId: shop.id,
+          creditBalance: 0,
+          creditLimit: c.type === 'WHOLESALE' ? 50000 : 0,
+          creditStatus: 'CLEAR' as CreditStatus,
+        },
+      });
+    }
+    customerCount++;
+  }
+  console.log(`   ✅ Ensured ${customerCount} customers\n`);
+
+  // ─────────────────────────────────────────────
+  // 8. Sample Quotations (upsert on shopId_quotationNumber)
+  //    - Links to existing customers and products
+  // ─────────────────────────────────────────────
+  console.log('📌 Ensuring Sample Quotations...');
+  let quotationCount = 0;
+
+  // Build product lookup by name
+  const productByName = new Map<string, string>();
+  const allProducts = await prisma.product.findMany({ where: { shopId: shop.id } });
+  for (const prod of allProducts) productByName.set(prod.name, prod.id);
+
+  for (const q of QUOTATIONS_DATA) {
+    const customerIndex = q.customerIndex;
+    const customerData = CUSTOMERS_DATA[customerIndex];
+    const customer = await prisma.customer.findFirst({
+      where: { phone: customerData.phone, shopId: shop.id },
+    });
+
+    if (!customer) {
+      console.log(`   ⚠️  Skipping quotation ${q.quotationNumber} - customer not found`);
+      continue;
+    }
+
+    // Calculate totals
+    const subtotal = q.items.reduce((sum, item) => {
+      const lineTotal = item.quantity * item.unitPrice;
+      return sum + lineTotal * (1 - item.discount / 100);
+    }, 0);
+    const grandTotal = subtotal - q.discountTotal + q.taxTotal;
+
+    const now = new Date();
+    const quotationDate = addDays(now, -(30 - quotationCount * 7)); // Stagger dates
+    const validityDate = addDays(quotationDate, q.validityDays);
+
+    // Upsert quotation
+    const quotation = await prisma.quotation.upsert({
+      where: {
+        shopId_quotationNumber: { shopId: shop.id, quotationNumber: q.quotationNumber },
       },
-    })
-  ));
-  console.log(`   ✅ Created ${products.length} products`);
-
-  const suppliers = await Promise.all(SUPPLIERS_DATA.map(s =>
-    prisma.supplier.create({ data: { name: s.name, contactPerson: s.contactPerson, email: s.email, phone: s.phone, address: s.address, shopId: shop.id } })
-  ));
-  console.log(`   ✅ Created ${suppliers.length} suppliers`);
-
-  const customers = await Promise.all(CUSTOMERS_DATA.map(c =>
-    prisma.customer.create({
-      data: {
-        name: c.name, email: c.email, phone: c.phone, address: c.address, nic: c.nic,
-        customerType: c.type, shopId: shop.id,
-        creditBalance: 0, creditLimit: c.type === 'WHOLESALE' ? 50000 : 0,
+      update: {
+        customerId: customer.id,
+        status: q.status,
+        subtotal,
+        discountTotal: q.discountTotal,
+        taxTotal: q.taxTotal,
+        grandTotal,
+        validityDate,
+        notes: q.notes,
+        terms: q.terms,
       },
-    })
-  ));
-  console.log(`   ✅ Created ${customers.length} customers\n`);
+      create: {
+        quotationNumber: q.quotationNumber,
+        shopId: shop.id,
+        customerId: customer.id,
+        status: q.status,
+        subtotal,
+        discountTotal: q.discountTotal,
+        taxTotal: q.taxTotal,
+        grandTotal,
+        validityDate,
+        notes: q.notes,
+        terms: q.terms,
+        createdById: admin.id,
+      },
+    });
 
-  console.log('╔═══════════════════════════════════╗');
-  console.log('║   ✅ SEEDING COMPLETE!             ║');
-  console.log('╚═══════════════════════════════════╝\n');
+    // Upsert items (delete+recreate on existing quotation items is safe because
+    // it only affects quotation-owned rows, never shared entities)
+    // First check if quotation already has items
+    const existingItems = await prisma.quotationItem.findMany({ where: { quotationId: quotation.id } });
+
+    if (existingItems.length === 0) {
+      await prisma.quotationItem.createMany({
+        data: q.items.map((item, idx) => {
+          const productId = item.itemType === 'PRODUCT'
+            ? (productByName.get(item.productName) || null)
+            : null;
+          const lineTotal = item.quantity * item.unitPrice;
+          return {
+            quotationId: quotation.id,
+            itemType: item.itemType,
+            productId,
+            serviceId: item.itemType === 'SERVICE' ? `service-${idx + 1}` : null,
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            discount: item.discount,
+            total: lineTotal * (1 - item.discount / 100),
+          };
+        }),
+      });
+    }
+
+    quotationCount++;
+    console.log(`   ✅ ${q.quotationNumber} (${q.status})`);
+  }
+  console.log(`   ✅ Ensured ${quotationCount} sample quotations\n`);
+
+  // ─────────────────────────────────────────────
+  // Done
+  // ─────────────────────────────────────────────
+  console.log('╔═══════════════════════════════════════════╗');
+  console.log('║   ✅ SEEDING COMPLETE!                     ║');
+  console.log('╚═══════════════════════════════════════════╝\n');
   console.log(`📝 Login: ${CONFIG.ADMIN.email} / ${CONFIG.ADMIN.password}`);
   console.log(`📝 Staff: staff@ecosystem.lk / Staff@1234`);
-  console.log(`🏪 Shop ID: ${shop.id}\n`);
+  console.log(`🏪 Shop ID: ${shop.id}`);
+  console.log(`💡 Data preservation: existing records (customers, products,\n   invoices, settings) were preserved — only missing seed data was added.\n`);
 }
 
 main()
