@@ -76,6 +76,7 @@ model Shop {
   suppliers     Supplier[]
   grns          GRN[]
   grnPayments   GRNPayment[]
+  quotations    Quotation[]
 
   @@map("shops")
 }
@@ -105,6 +106,7 @@ model User {
   paymentsRecorded  InvoicePayment[]
   grnsCreated       GRN[]      @relation("GRNCreatedBy")
   grnPaymentsRecorded GRNPayment[]
+  quotationsCreated Quotation[] @relation("QuotationCreatedBy")
   refreshTokens     RefreshToken[]
 
   @@index([shopId])
@@ -196,6 +198,7 @@ model Customer {
   // Relations
   invoices      Invoice[]
   payments      CustomerPaymentRecord[]
+  quotations    Quotation[]
 
   @@index([shopId])
   @@index([phone])
@@ -357,6 +360,7 @@ model Product {
   stockMovements  StockMovement[]
   priceHistory    PriceHistory[]
   grnItems        GRNItem[]
+  quotationItems  QuotationItem[]
 
   @@unique([shopId, barcode])  // Unique barcode per shop
   @@index([shopId])
@@ -869,5 +873,94 @@ enum PaymentStatus {
   UNPAID
   PARTIAL
   PAID
+}
+
+// ==========================================
+// QUOTATION / PRICING PROPOSAL MANAGEMENT
+// ==========================================
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  CONVERTED
+}
+
+enum QuotationItemType {
+  PRODUCT
+  SERVICE
+}
+
+model Quotation {
+  id              String          @id @default(cuid())
+  quotationNumber String          // e.g. QUO-2026-0001
+
+  // Shop relation
+  shopId          String
+  shop            Shop            @relation(fields: [shopId], references: [id])
+
+  // Customer relation
+  customerId      String
+  customer        Customer        @relation(fields: [customerId], references: [id])
+
+  // Status
+  status          QuotationStatus @default(DRAFT)
+
+  // Amounts
+  subtotal        Float
+  discountTotal   Float           @default(0)
+  taxTotal        Float           @default(0)
+  grandTotal      Float
+
+  // Details
+  notes           String?         @db.Text
+  terms           String?         @db.Text
+  validityDate    DateTime?
+
+  // Audit
+  createdById     String?
+  createdBy       User?           @relation("QuotationCreatedBy", fields: [createdById], references: [id])
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  items           QuotationItem[]
+
+  @@unique([shopId, quotationNumber])
+  @@index([shopId])
+  @@index([customerId])
+  @@index([status])
+  @@map("quotations")
+}
+
+model QuotationItem {
+  id              String            @id @default(cuid())
+
+  // Quotation relation
+  quotationId     String
+  quotation       Quotation         @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  // Item type
+  itemType        QuotationItemType @default(PRODUCT)
+
+  // Optional relations
+  productId       String?
+  product         Product?          @relation(fields: [productId], references: [id])
+  serviceId       String?           // Reference for service items (no dedicated Service model yet)
+
+  // Item snapshot
+  description     String
+  quantity        Int               @default(1)
+  unitPrice       Float
+  discount        Float             @default(0)
+  total           Float
+
+  createdAt       DateTime          @default(now())
+
+  @@index([quotationId])
+  @@index([productId])
+  @@map("quotation_items")
 }
 
