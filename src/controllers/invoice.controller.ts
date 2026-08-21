@@ -5,6 +5,7 @@ import { Prisma, InvoiceStatus, PaymentMethod, SalesChannel, ReminderType } from
 import { sendInvoiceEmail, sendInvoiceWithPDF } from '../services/emailService';
 import { generateInvoicePDF, InvoicePDFData } from '../services/pdfService';
 import { getShopId } from '../lib/shopId';
+import { paymentService } from '../services/payment.service';
 // Import centralized type definitions
 import '../types/express';
 
@@ -494,15 +495,40 @@ export const createInvoice = async (
         });
       }
 
-      // Update product stock (only for items with valid productId)
+      // 🔒 NEGATIVE STOCK PREVENTION: Use conditional updateMany with stock >= qty guard.
+      // Stock can never decrement below zero — roll back the transaction if insufficient.
       for (const item of validatedItems) {
         if (item.productId) {
-          await tx.product.update({
-            where: { id: item.productId },
-            data: {
-              stock: { decrement: item.quantity },
-            },
+          const result = await tx.product.updateMany({
+            where: { id: item.productId, stock: { gte: item.quantity } },
+            data: { stock: { decrement: item.quantity }, totalSold: { increment: item.quantity } },
           });
+
+          if (result.count === 0) {
+            throw new AppError(
+              `Insufficient stock for product "${item.productName}" (id: ${item.productId}). Available stock is below the requested quantity of ${item.quantity}.`,
+              400
+            );
+          }
+
+          const product = await tx.product.findUnique({ where: { id: item.productId } });
+          if (product) {
+            await tx.stockMovement.create({
+              data: {
+                productId: item.productId,
+                type: 'INVOICE_OUT',
+                quantity: -item.quantity,
+                previousStock: product.stock + item.quantity,
+                newStock: product.stock,
+                referenceId: newInvoice.id,
+                referenceNumber: invoiceNumber,
+                referenceType: 'invoice',
+                unitPrice: new Prisma.Decimal(item.unitPrice.toFixed(2)),
+                shopId: invoiceShopId,
+                createdBy: req.user?.id,
+              },
+            });
+          }
         }
       }
 
@@ -665,17 +691,28 @@ export const updateInvoice = async (
           const difference = newQty - oldQty;
           
           if (difference !== 0) {
-            // If difference > 0: We need MORE stock (decrement)
-            // If difference < 0: We need LESS stock (increment - returning to inventory)
-            await tx.product.update({
-              where: { id: productId },
-              data: {
-                stock: difference > 0 
-                  ? { decrement: difference }  // Taking more from stock
-                  : { increment: Math.abs(difference) }, // Returning to stock
-              },
-            });
-            
+            if (difference > 0) {
+              // 🔒 NEGATIVE STOCK PREVENTION: Only decrement if stock is sufficient.
+              // If insufficient, roll back the entire transaction.
+              const result = await tx.product.updateMany({
+                where: { id: productId, stock: { gte: difference } },
+                data: { stock: { decrement: difference } },
+              });
+
+              if (result.count === 0) {
+                throw new AppError(
+                  `Insufficient stock for product (id: ${productId}). Requested decrement: ${difference}, but available stock is below that.`,
+                  400
+                );
+              }
+            } else {
+              // Returning stock to inventory (increment is always safe)
+              await tx.product.update({
+                where: { id: productId },
+                data: { stock: { increment: Math.abs(difference) } },
+              });
+            }
+
             console.log(`📦 Stock adjusted for product ${productId}: ${difference > 0 ? '-' : '+'}${Math.abs(difference)} (old: ${oldQty}, new: ${newQty})`);
           }
         }
@@ -879,66 +916,19 @@ export const addPayment = async (
       throw new AppError('Invoice is already fully paid', 400);
     }
 
-    const maxPayment = invoice.dueAmount;
-    if (amount > maxPayment) {
-      throw new AppError(`Payment amount cannot exceed due amount of ${maxPayment}`, 400);
-    }
-
-    // Calculate new amounts
-    const newPaidAmount = invoice.paidAmount + amount;
-    const newDueAmount = invoice.total - newPaidAmount;
-    const newStatus = calculateInvoiceStatus(invoice.total, newPaidAmount);
-
-    // Create payment and update invoice in transaction
-    const [payment, updatedInvoice] = await prisma.$transaction(async (tx) => {
-      const newPayment = await tx.invoicePayment.create({
-        data: {
-          invoiceId: invoiceId,
-          amount,
-          paymentMethod: paymentMethod as PaymentMethod,
-          notes,
-          reference,
-        },
-      });
-
-      const updated = await tx.invoice.update({
-        where: { id: invoiceId },
-        data: {
-          paidAmount: newPaidAmount,
-          dueAmount: newDueAmount,
-          status: newStatus,
-        },
-        include: {
-          customer: true,
-          items: true,
-          payments: {
-            orderBy: { paymentDate: 'desc' }
-          },
-        },
-      });
-
-      // Update customer stats (only if not walk-in customer)
-      if (invoice.customerId) {
-        await tx.customer.update({
-          where: { id: invoice.customerId },
-          data: {
-            totalSpent: { increment: amount },
-            creditBalance: { decrement: amount },
-            creditStatus: newStatus === 'FULLPAID' ? 'CLEAR' : undefined,
-          },
-        });
-      }
-
-      return [newPayment, updated];
+    // 🔒 RACE-CONDITION SAFE: Delegates to PaymentService which validates
+    // amount <= dueAmount INSIDE the atomic prisma.$transaction.
+    const result = await paymentService.addPayment(req.user?.shopId, id, {
+      amount: Number(amount),
+      paymentMethod: paymentMethod as PaymentMethod,
+      notes,
+      reference,
     });
 
     res.status(201).json({
       success: true,
       message: 'Payment recorded successfully',
-      data: {
-        payment,
-        invoice: updatedInvoice,
-      },
+      data: result,
     });
   } catch (error) {
     next(error);
@@ -1008,9 +998,9 @@ export const getInvoiceStats = async (
     const statusStats = statusCounts.reduce((acc, curr) => {
       acc[curr.status.toLowerCase()] = {
         count: curr._count.status,
-        total: curr._sum.total || 0,
-        paid: curr._sum.paidAmount || 0,
-        due: curr._sum.dueAmount || 0,
+        total: Number(curr._sum.total) || 0,
+        paid: Number(curr._sum.paidAmount) || 0,
+        due: Number(curr._sum.dueAmount) || 0,
       };
       return acc;
     }, {} as Record<string, { count: number; total: number; paid: number; due: number }>);

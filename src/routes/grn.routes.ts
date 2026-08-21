@@ -107,7 +107,7 @@ router.post('/:id/payments', async (req: Request, res: Response, next: NextFunct
     }
 
     // Validate payment amount doesn't exceed remaining
-    const remainingAmount = grn.totalAmount - grn.paidAmount;
+    const remainingAmount = Number(grn.totalAmount) - Number(grn.paidAmount);
     if (amount > remainingAmount) {
       return res.status(400).json({ 
         success: false, 

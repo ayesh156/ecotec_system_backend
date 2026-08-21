@@ -95,9 +95,12 @@ export const errorHandler = (
     message,
   };
 
-  // Include error details for debugging (temporarily enabled in production)
-  response.error = err.message;
-  response.stack = err.stack;
+  // 🔒 SECURITY: Never leak internal error details in production.
+  // Only include stack traces / raw messages during development.
+  if (process.env.NODE_ENV !== 'production') {
+    response.error = err.message;
+    response.stack = err.stack;
+  }
 
   console.error(`❌ Error: ${message}`, err);
 

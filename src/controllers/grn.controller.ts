@@ -114,7 +114,7 @@ export const createGRN = async (req: AuthRequest, res: Response, next: NextFunct
         });
 
         // Price history record
-        if (item.costPrice > 0 && (item.costPrice !== product.costPrice || item.sellingPrice !== product.price)) {
+        if (Number(item.costPrice) > 0 && (Number(item.costPrice) !== Number(product.costPrice) || Number(item.sellingPrice) !== Number(product.price))) {
           await tx.priceHistory.create({
             data: {
               productId: item.productId, changeType: item.sellingPrice ? 'BOTH' : 'COST_UPDATE',
@@ -330,7 +330,7 @@ export const sendGRNEmail = async (req: AuthRequest, res: Response, next: NextFu
       date: grn.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
       items: grnItems, subtotal: Number(grn.subtotal), tax: Number(grn.tax),
       discount: Number(grn.discount), totalAmount: Number(grn.totalAmount),
-      paidAmount: Number(grn.paidAmount), balanceDue: Number(grn.totalAmount - grn.paidAmount),
+      paidAmount: Number(grn.paidAmount), balanceDue: Number(grn.totalAmount) - Number(grn.paidAmount),
       paymentStatus: grn.paymentStatus,
       shopName: grn.shop?.name || 'Our Store', shopPhone: grn.shop?.phone || undefined,
       shopEmail: grn.shop?.email || undefined, shopAddress: grn.shop?.address || undefined,
