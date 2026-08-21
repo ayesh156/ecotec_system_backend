@@ -8,6 +8,7 @@ import {
   deleteQuotation,
   convertQuotationToInvoice,
   getQuotationStats,
+  getNextQuotationNumber,
 } from '../controllers/quotation.controller';
 import { validateQuotation, validateQuotationUpdate } from '../validators/quotation.validator';
 
@@ -20,6 +21,9 @@ router.use(protect);
 // NOTE: /stats must be registered BEFORE /:id to avoid route conflicts
 router.route('/stats')
   .get(getQuotationStats);
+
+router.route('/next-number')
+  .get(getNextQuotationNumber);
 
 router.route('/')
   .get(getAllQuotations)

@@ -9,6 +9,7 @@ import {
   convertEstimateToQuotation,
   convertEstimateToInvoice,
   getEstimateStats,
+  getNextEstimateNumber,
 } from '../controllers/estimate.controller';
 import { validateEstimate, validateEstimateUpdate } from '../validators/estimate.validator';
 
@@ -17,9 +18,12 @@ const router = Router();
 // All estimate routes require authentication
 router.use(protect);
 
-// Stats must be registered BEFORE /:id to avoid route conflicts
+// Stats & next-number must be registered BEFORE /:id to avoid route conflicts
 router.route('/stats')
   .get(getEstimateStats);
+
+router.route('/next-number')
+  .get(getNextEstimateNumber);
 
 router.route('/')
   .get(getAllEstimates)

@@ -19,6 +19,14 @@ const validateItem = (item: any, index: number): void => {
   }
 };
 
+const validateEstimateNumber = (value: unknown): void => {
+  if (value !== undefined && value !== null) {
+    if (typeof value !== 'string' || !/^\d{10}$/.test(value)) {
+      throw new AppError('Estimate number must be a 10-digit numeric string', 400);
+    }
+  }
+};
+
 export const validateEstimate = (req: Request, _res: Response, next: NextFunction) => {
   try {
     const body = req.body || {};
@@ -27,6 +35,7 @@ export const validateEstimate = (req: Request, _res: Response, next: NextFunctio
       throw new AppError('At least one item is required', 400);
     }
     body.items.forEach(validateItem);
+    validateEstimateNumber(body.estimateNumber);
     if (body.status && !VALID_STATUSES.includes(body.status.toUpperCase())) {
       throw new AppError('Invalid estimate status', 400);
     }
@@ -45,6 +54,7 @@ export const validateEstimateUpdate = (req: Request, _res: Response, next: NextF
       }
       body.items.forEach(validateItem);
     }
+    validateEstimateNumber(body.estimateNumber);
     if (body.status && !VALID_STATUSES.includes(body.status.toUpperCase())) {
       throw new AppError('Invalid estimate status', 400);
     }

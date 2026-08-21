@@ -1,8 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
-import { estimateService } from '../services/estimate.service';
+import { estimateService, generateEstimateNumber } from '../services/estimate.service';
 import { toJSON } from '../lib/serializer';
 import { getShopId } from '../lib/shopId';
+import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types/express';
+
+export const getNextEstimateNumber = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const shopId = getShopId();
+    if (!shopId) throw new AppError('User is not associated with any shop', 403);
+    const number = await generateEstimateNumber(shopId);
+    res.json({ success: true, data: { number } });
+  } catch (error) { next(error); }
+};
 
 export const getAllEstimates = async (req: Request, res: Response, next: NextFunction) => {
   try {

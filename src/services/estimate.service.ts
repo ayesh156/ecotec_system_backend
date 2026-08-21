@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma';
 import { AppError } from '../middleware/errorHandler';
 import { Prisma, EstimateStatus, EstimateItemType } from '@prisma/client';
+import { generateUniqueDocumentNumber } from '../lib/documentNumber';
 
 export interface EstimateItemInput {
   itemType?: EstimateItemType;
@@ -24,20 +25,15 @@ export interface EstimateQueryParams {
   sortOrder?: 'asc' | 'desc';
 }
 
-// Generate EST-YYYY-XXXX with uniqueness retry
-const generateEstimateNumber = async (shopId: string): Promise<string> => {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const count = await prisma.estimate.count({ where: { shopId } });
-    const year = new Date().getFullYear();
-    const sequence = (count + 1).toString().padStart(4, '0');
-    const eNumber = `EST-${year}-${sequence}`;
+// Generate unique 10-digit estimate number with collision check
+export const generateEstimateNumber = async (shopId: string): Promise<string> => {
+  return generateUniqueDocumentNumber(shopId, async (number) => {
     const existing = await prisma.estimate.findUnique({
-      where: { shopId_estimateNumber: { shopId, estimateNumber: eNumber } },
+      where: { shopId_estimateNumber: { shopId, estimateNumber: number } },
       select: { id: true },
     });
-    if (!existing) return eNumber;
-  }
-  return `EST-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+    return !!existing;
+  });
 };
 
 const calculateTotals = (
@@ -129,8 +125,9 @@ export class EstimateService {
     notes?: string;
     terms?: string;
     internalNotes?: string;
+    estimateNumber?: string;
   }) {
-    const { customerId, items, status = 'DRAFT', discountTotal = 0, taxTotal = 0, validityDate, notes, terms, internalNotes } = data;
+    const { customerId, items, status = 'DRAFT', discountTotal = 0, taxTotal = 0, validityDate, notes, terms, internalNotes, estimateNumber: clientEstimateNumber } = data;
 
     if (!items || items.length === 0) throw new AppError('At least one item is required', 400);
 
@@ -152,7 +149,18 @@ export class EstimateService {
     }));
 
     const { subtotal, grandTotal, itemTotals } = calculateTotals(validatedItems, Number(discountTotal) || 0, Number(taxTotal) || 0);
-    const estimateNumber = await generateEstimateNumber(shopId);
+
+    // 🔒 STRICT: If the client supplied a valid 10-digit document number, USE IT EXACTLY.
+    // Only generate a fallback number when the payload did not supply one.
+    let estimateNumber = '';
+    if (clientEstimateNumber !== undefined && clientEstimateNumber !== null && clientEstimateNumber !== '') {
+      if (typeof clientEstimateNumber !== 'string' || !/^\d{10}$/.test(clientEstimateNumber)) {
+        throw new AppError('Estimate number must be a 10-digit numeric string', 400);
+      }
+      estimateNumber = clientEstimateNumber;
+    } else {
+      estimateNumber = await generateEstimateNumber(shopId);
+    }
 
     const estimate = await prisma.$transaction(async (tx) => {
       return tx.estimate.create({

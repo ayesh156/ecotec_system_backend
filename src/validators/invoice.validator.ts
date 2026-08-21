@@ -18,6 +18,12 @@ const handleValidationErrors = (
 
 // Invoice validation rules
 export const validateInvoice = [
+  body('invoiceNumber')
+    .optional()
+    .isString()
+    .matches(/^\d{10}$/)
+    .withMessage('Invoice number must be a 10-digit numeric string'),
+
   body('customerId')
     .optional() // Optional for walk-in customers
     .isString()

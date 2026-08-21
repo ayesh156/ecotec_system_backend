@@ -1,8 +1,21 @@
 import { Request, Response, NextFunction } from 'express';
-import { quotationService } from '../services/quotation.service';
+import { quotationService, generateQuotationNumber } from '../services/quotation.service';
 import { toJSON } from '../lib/serializer';
 import { getShopId } from '../lib/shopId';
+import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types/express';
+
+// GET /api/v1/quotations/next-number
+export const getNextQuotationNumber = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const shopId = getShopId();
+    if (!shopId) throw new AppError('User is not associated with any shop', 403);
+    const number = await generateQuotationNumber(shopId);
+    res.json({ success: true, data: { number } });
+  } catch (error) {
+    next(error);
+  }
+};
 
 // GET /api/v1/quotations
 export const getAllQuotations = async (req: Request, res: Response, next: NextFunction) => {

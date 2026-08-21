@@ -55,6 +55,12 @@ export const validateQuotation = [
     .isFloat({ min: 0 })
     .withMessage('Discount must be a positive number'),
 
+  body('quotationNumber')
+    .optional()
+    .isString()
+    .matches(/^\d{10}$/)
+    .withMessage('Quotation number must be a 10-digit numeric string'),
+
   body('status')
     .optional()
     .isIn(['DRAFT', 'SENT', 'ACCEPTED', 'REJECTED', 'CONVERTED'])
@@ -129,6 +135,12 @@ export const validateQuotationUpdate = [
     .optional()
     .isFloat({ min: 0 })
     .withMessage('Discount must be a positive number'),
+
+  body('quotationNumber')
+    .optional()
+    .isString()
+    .matches(/^\d{10}$/)
+    .withMessage('Quotation number must be a 10-digit numeric string'),
 
   body('status')
     .optional()

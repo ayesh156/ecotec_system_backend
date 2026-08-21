@@ -17,6 +17,7 @@ import {
   getInvoiceEmailStatus,
   downloadInvoicePDF,
   sendInvoiceEmailWithPDF,
+  getNextInvoiceNumber,
 } from '../controllers/invoice.controller';
 import { validateInvoice, validateInvoiceUpdate, validatePayment } from '../validators/invoice.validator';
 
@@ -24,6 +25,10 @@ const router = Router();
 
 // 🔒 All invoice routes require authentication
 router.use(protect);
+
+// Get next invoice number (must be registered before /:id)
+router.route('/next-number')
+  .get(getNextInvoiceNumber);
 
 // Invoice CRUD routes
 router.route('/')

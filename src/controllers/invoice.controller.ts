@@ -6,6 +6,7 @@ import { sendInvoiceEmail, sendInvoiceWithPDF } from '../services/emailService';
 import { generateInvoicePDF, InvoicePDFData } from '../services/pdfService';
 import { getShopId } from '../lib/shopId';
 import { paymentService } from '../services/payment.service';
+import { generateUniqueDocumentNumber } from '../lib/documentNumber';
 // Import centralized type definitions
 import '../types/express';
 
@@ -62,34 +63,40 @@ const generateUniqueInvoiceNumber = async (
   shopId: string,
   maxRetries: number = 5
 ): Promise<string> => {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    // Generate fresh invoice number (new timestamp + new random)
-    const invoiceNumber = await generateInvoiceNumber(shopId);
-    
-    // Check if this number already exists for this shop
-    const existing = await prisma.invoice.findUnique({
-      where: {
-        shopId_invoiceNumber: {
-          shopId,
-          invoiceNumber,
-        }
-      },
-      select: { id: true }
-    });
-    
-    if (!existing) {
-      return invoiceNumber;
+  return generateUniqueDocumentNumber(
+    shopId,
+    async (candidate) => {
+      const existing = await prisma.invoice.findUnique({
+        where: {
+          shopId_invoiceNumber: {
+            shopId,
+            invoiceNumber: candidate,
+          }
+        },
+        select: { id: true }
+      });
+      return !!existing;
     }
-    
-    // Collision occurred - wait a bit then retry
-    // Each retry waits progressively longer: 5ms, 10ms, 15ms, 20ms, 25ms
-    await new Promise(resolve => setTimeout(resolve, 5 * (attempt + 1)));
+  );
+};
+
+// @desc    Get next invoice number
+// @route   GET /api/v1/invoices/next-number
+// @access  Private
+export const getNextInvoiceNumber = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?.shopId) {
+      throw new AppError('User is not associated with any shop', 403);
+    }
+    const number = await generateUniqueInvoiceNumber(req.user.shopId);
+    res.json({ success: true, data: { number } });
+  } catch (error) {
+    next(error);
   }
-  
-  // Fallback: Use full epoch timestamp (last 10 digits)
-  // This is extremely unlikely to be reached
-  const timestamp = Date.now().toString().slice(-10);
-  return timestamp;
 };
 
 // Helper function to calculate invoice status
@@ -336,6 +343,7 @@ export const createInvoice = async (
       salesChannel = 'ON_SITE',
       paidAmount = 0,
       notes,
+      invoiceNumber: clientInvoiceNumber,
       shopId, // Can be provided in request body
     } = req.body;
 
@@ -386,6 +394,7 @@ export const createInvoice = async (
       originalPrice?: number;
       discount?: number;
       warrantyDueDate?: string;
+      total: number;
     };
 
     // Validate product IDs - check if they exist, set to null if not found (for quick-add items)
@@ -403,26 +412,48 @@ export const createInvoice = async (
           console.log(`⚠️ Product not found: ${item.productId} (${item.productName}) - treating as quick-add item`);
         }
       }
+
+      // 🔒 SANITIZE: Convert all monetary values into strict Numbers before math/Prisma.
+      // Incoming item fields may arrive as strings (e.g. "175000", "596") — this
+      // eliminates string concatenation in totals and `.toFixed()` TypeErrors.
+      const unitPrice = Number(item.unitPrice) || 0;
+      const quantity = Number(item.quantity) || 1;
+      const discount = Number(item.discount) || 0;
+      const total = Number(item.total) || (unitPrice * quantity);
       
       validatedItems.push({
         ...item,
         productId: validProductId,
+        unitPrice,
+        quantity,
+        discount,
+        total,
       });
     }
 
-    // Calculate totals
-    // Calculate totals using validated items
-    const subtotal = validatedItems.reduce((sum: number, item: { quantity: number; unitPrice: number }) => {
-      return sum + (item.quantity * item.unitPrice);
+    // Calculate totals using strict Number arithmetic to eliminate string concatenation
+    const safeTax = Number(tax) || 0;
+    const safeDiscount = Number(discount) || 0;
+    const safePaidAmount = Number(paidAmount) || 0;
+    const subtotal = validatedItems.reduce((sum: number, item) => {
+      return sum + item.total;
     }, 0);
 
-    const total = subtotal + tax - discount;
-    const dueAmount = total - paidAmount;
-    const status = calculateInvoiceStatus(total, paidAmount);
+    const total = subtotal + safeTax - safeDiscount;
+    const dueAmount = total - safePaidAmount;
+    const status = calculateInvoiceStatus(total, safePaidAmount);
 
-    // Generate unique invoice number for this shop
-    // Uses shop-specific sequence + millisecond precision + random component
-    const invoiceNumber = await generateUniqueInvoiceNumber(invoiceShopId);
+    // 🔒 STRICT: If the client supplied a valid 10-digit document number, USE IT EXACTLY.
+    // Only generate a fallback number when the payload did not supply one.
+    let invoiceNumber = '';
+    if (clientInvoiceNumber !== undefined && clientInvoiceNumber !== null && clientInvoiceNumber !== '') {
+      if (typeof clientInvoiceNumber !== 'string' || !/^\d{10}$/.test(clientInvoiceNumber)) {
+        throw new AppError('Invoice number must be a 10-digit numeric string', 400);
+      }
+      invoiceNumber = clientInvoiceNumber;
+    } else {
+      invoiceNumber = await generateUniqueInvoiceNumber(invoiceShopId);
+    }
 
     // Create invoice with items in a transaction
     const invoice = await prisma.$transaction(async (tx) => {
@@ -432,10 +463,10 @@ export const createInvoice = async (
           customerId: validCustomerId, // null for walk-in customers
           customerName, // "Walk-in Customer" or actual customer name
           subtotal,
-          tax,
-          discount,
+          tax: safeTax,
+          discount: safeDiscount,
           total,
-          paidAmount,
+          paidAmount: safePaidAmount,
           dueAmount,
           status,
           dueDate: new Date(dueDate),
@@ -444,15 +475,7 @@ export const createInvoice = async (
           notes,
           shopId: invoiceShopId,
           items: {
-            create: validatedItems.map((item: {
-              productId: string | null;
-              productName: string;
-              quantity: number;
-              unitPrice: number;
-              originalPrice?: number;
-              discount?: number;
-              warrantyDueDate?: string;
-            }) => ({
+            create: validatedItems.map((item) => ({
               productId: item.productId, // Can be null for quick-add items
               productName: item.productName,
               quantity: item.quantity,
@@ -523,7 +546,7 @@ export const createInvoice = async (
                 referenceId: newInvoice.id,
                 referenceNumber: invoiceNumber,
                 referenceType: 'invoice',
-                unitPrice: new Prisma.Decimal(item.unitPrice.toFixed(2)),
+                unitPrice: Number(item.unitPrice.toFixed(2)),
                 shopId: invoiceShopId,
                 createdBy: req.user?.id,
               },

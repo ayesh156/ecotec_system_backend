@@ -28,12 +28,16 @@ for (const envPath of envPaths) {
 
 import {
   PrismaClient,
+  Prisma,
   CreditStatus,
   CustomerType,
   QuotationStatus,
   QuotationItemType,
   EstimateStatus,
   EstimateItemType,
+  InvoiceStatus,
+  PaymentMethod,
+  SalesChannel,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -42,9 +46,9 @@ const prisma = new PrismaClient();
 const CONFIG = {
   BCRYPT_ROUNDS: 10,
   SHOP: {
-    name: 'EcoSystem Shop',
-    slug: 'ecosystem',
-    subName: 'SOLUTIONS',
+    name: 'Ecotec',
+    slug: 'ecotec',
+    subName: 'Computer Solutions',
     tagline: 'Computer Solutions',
   },
   ADMIN: {
@@ -95,13 +99,9 @@ function addDays(date: Date, days: number): Date {
   return d;
 }
 
-function generateQuotationNumber(index: number, year: number = 2026): string {
-  return `QUO-${year}-${String(index).padStart(4, '0')}`;
-}
-
-function generateEstimateNumber(index: number, year: number = 2026): string {
-  return `EST-${year}-${String(index).padStart(4, '0')}`;
-}
+// 10-digit numeric document numbering (authoritative format fed by backend/next-number)
+const NEXT_QUOTATION_NUMBERS = ['9201847365', '0383434682', '7829104823', '5934692317', '6104829371'];
+const NEXT_ESTIMATE_NUMBERS = ['9201847365', '0383434682', '7829104823', '5934692317', '8392017462'];
 
 // ==========================================
 // DATA
@@ -257,7 +257,7 @@ interface SeedEstimate {
 
 const ESTIMATES_DATA: SeedEstimate[] = [
   {
-    estimateNumber: generateEstimateNumber(1),
+    estimateNumber: NEXT_ESTIMATE_NUMBERS[0],
     customerIndex: 0, // Kamal Perera
     status: 'DRAFT',
     discountTotal: 0,
@@ -273,7 +273,7 @@ const ESTIMATES_DATA: SeedEstimate[] = [
     ],
   },
   {
-    estimateNumber: generateEstimateNumber(2),
+    estimateNumber: NEXT_ESTIMATE_NUMBERS[1],
     customerIndex: 1, // Nimal Silva
     status: 'SENT',
     discountTotal: 2500,
@@ -288,7 +288,7 @@ const ESTIMATES_DATA: SeedEstimate[] = [
     ],
   },
   {
-    estimateNumber: generateEstimateNumber(3),
+    estimateNumber: NEXT_ESTIMATE_NUMBERS[2],
     customerIndex: 2, // ABC Computers
     status: 'ACCEPTED',
     discountTotal: 10000,
@@ -303,7 +303,7 @@ const ESTIMATES_DATA: SeedEstimate[] = [
     ],
   },
   {
-    estimateNumber: generateEstimateNumber(4),
+    estimateNumber: NEXT_ESTIMATE_NUMBERS[3],
     customerIndex: 3, // Lanka Insurance PLC
     status: 'SENT',
     discountTotal: 0,
@@ -318,7 +318,7 @@ const ESTIMATES_DATA: SeedEstimate[] = [
     ],
   },
   {
-    estimateNumber: generateEstimateNumber(5),
+    estimateNumber: NEXT_ESTIMATE_NUMBERS[4],
     customerIndex: 4, // Dr. Saman Wickramasinghe
     status: 'DRAFT',
     discountTotal: 3000,
@@ -335,9 +335,58 @@ const ESTIMATES_DATA: SeedEstimate[] = [
   },
 ];
 
+interface SeedInvoice {
+  invoiceNumber: string;
+  customerIndex: number; // index into CUSTOMERS_DATA
+  status: InvoiceStatus;
+  discount: number;
+  tax: number;
+  notes: string;
+  items: SeedQuotationItem[];
+}
+
+const INVOICES_DATA: SeedInvoice[] = [
+  {
+    invoiceNumber: '2944117382',
+    customerIndex: 0, // Kamal Perera
+    status: 'FULLPAID',
+    discount: 0,
+    tax: 0,
+    notes: 'Fully paid cash sale. Premium laptop with wireless peripherals.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'Dell Inspiron 15', description: 'Dell Inspiron 15 laptop with 8GB RAM, 512GB SSD', quantity: 1, unitPrice: 175000, discount: 0 },
+      { itemType: 'PRODUCT', productName: 'Logitech MK270 Combo', description: 'Wireless keyboard and mouse combo', quantity: 1, unitPrice: 8500, discount: 0 },
+    ],
+  },
+  {
+    invoiceNumber: '5934692317',
+    customerIndex: 2, // ABC Computers
+    status: 'HALFPAY',
+    discount: 15000,
+    tax: 0,
+    notes: 'Half paid - 50% advance received. Balance due within Net 30.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'HP EliteBook 840', description: 'HP EliteBook 840 G9 - 2 units for office staff', quantity: 2, unitPrice: 295000, discount: 2 },
+      { itemType: 'PRODUCT', productName: 'LG 27" IPS Monitor', description: '27" LG IPS monitors for workstations', quantity: 2, unitPrice: 65000, discount: 0 },
+    ],
+  },
+  {
+    invoiceNumber: '0383434682',
+    customerIndex: 4, // Dr. Saman Wickramasinghe
+    status: 'UNPAID',
+    discount: 3000,
+    tax: 0,
+    notes: 'Credit sale for VIP customer. Payment due in 30 days.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'Apple iPhone 15', description: 'Apple iPhone 15 128GB - Black', quantity: 1, unitPrice: 385000, discount: 0 },
+      { itemType: 'PRODUCT', productName: 'Logitech MK270 Combo', description: 'Wireless keyboard and mouse combo for home office', quantity: 1, unitPrice: 8500, discount: 5 },
+    ],
+  },
+];
+
 const QUOTATIONS_DATA: SeedQuotation[] = [
   {
-    quotationNumber: generateQuotationNumber(1),
+    quotationNumber: NEXT_QUOTATION_NUMBERS[0],
     customerIndex: 0, // Kamal Perera
     status: 'DRAFT',
     discountTotal: 0,
@@ -352,7 +401,7 @@ const QUOTATIONS_DATA: SeedQuotation[] = [
     ],
   },
   {
-    quotationNumber: generateQuotationNumber(2),
+    quotationNumber: NEXT_QUOTATION_NUMBERS[1],
     customerIndex: 1, // Nimal Silva
     status: 'SENT',
     discountTotal: 5000,
@@ -366,7 +415,7 @@ const QUOTATIONS_DATA: SeedQuotation[] = [
     ],
   },
   {
-    quotationNumber: generateQuotationNumber(3),
+    quotationNumber: NEXT_QUOTATION_NUMBERS[2],
     customerIndex: 2, // ABC Computers
     status: 'ACCEPTED',
     discountTotal: 15000,
@@ -380,7 +429,7 @@ const QUOTATIONS_DATA: SeedQuotation[] = [
     ],
   },
   {
-    quotationNumber: generateQuotationNumber(4),
+    quotationNumber: NEXT_QUOTATION_NUMBERS[3],
     customerIndex: 3, // Lanka Insurance PLC
     status: 'REJECTED',
     discountTotal: 0,
@@ -394,13 +443,13 @@ const QUOTATIONS_DATA: SeedQuotation[] = [
     ],
   },
   {
-    quotationNumber: generateQuotationNumber(5),
+    quotationNumber: NEXT_QUOTATION_NUMBERS[4],
     customerIndex: 4, // Dr. Saman Wickramasinghe
     status: 'CONVERTED',
     discountTotal: 3000,
     taxTotal: 0,
     validityDays: 30,
-    notes: 'Converted to invoice INV-2026-XXXX. Payment received in full.',
+    notes: 'Converted to invoice 0383434682. Payment received in full.',
     terms: 'This quotation is valid for 30 days from the date of issue.\nPrices are subject to change without prior notice.\nPayment terms: 50% advance, 50% on delivery.',
     items: [
       { itemType: 'PRODUCT', productName: 'Apple iPhone 15', description: 'Apple iPhone 15 128GB - Black', quantity: 1, unitPrice: 385000, discount: 0 },
@@ -450,6 +499,20 @@ async function main() {
   });
   console.log(`   ✅ Shop: ${shop.name} (${shop.id})`);
   console.log(`   ℹ️  Set DEFAULT_SHOP_ID=${shop.id} in .env\n`);
+
+  // ─────────────────────────────────────────────
+  // 1b. Purge legacy prefixed document numbers (QUO-*) / (EST-*)
+  //     so the seed fully migrates to 10-digit numeric format.
+  // ─────────────────────────────────────────────
+  console.log('📌 Purging legacy prefixed document numbers...');
+  const legacyQuotationCount = await prisma.quotation.deleteMany({
+    where: { shopId: shop.id, quotationNumber: { startsWith: 'QUO-' } },
+  });
+  const legacyEstimateCount = await prisma.estimate.deleteMany({
+    where: { shopId: shop.id, estimateNumber: { startsWith: 'EST-' } },
+  });
+  console.log(`   🗑️  Removed ${legacyQuotationCount.count} legacy QUO-* quotation(s)`);
+  console.log(`   🗑️  Removed ${legacyEstimateCount.count} legacy EST-* estimate(s)\n`);
 
   // ─────────────────────────────────────────────
   // 2. Admin & Staff Users (upsert - never deletes)
@@ -808,6 +871,113 @@ async function main() {
     console.log(`   ✅ ${e.estimateNumber} (${e.status})`);
   }
   console.log(`   ✅ Ensured ${estimateCount} sample estimates\n`);
+
+  // ─────────────────────────────────────────────
+  // 10. Sample Invoices (upsert on shopId_invoiceNumber)
+  //     - Links to existing customers and products
+  //     - Uses Prisma.Decimal for strict monetary values
+  // ─────────────────────────────────────────────
+  console.log('📌 Ensuring Sample Invoices...');
+  let invoiceCount = 0;
+
+  for (const inv of INVOICES_DATA) {
+    const customerData = CUSTOMERS_DATA[inv.customerIndex];
+    const customer = await prisma.customer.findFirst({
+      where: { phone: customerData.phone, shopId: shop.id },
+    });
+
+    if (!customer) {
+      console.log(`   ⚠️  Skipping invoice ${inv.invoiceNumber} - customer not found`);
+      continue;
+    }
+
+    // Calculate totals using strict Number arithmetic (no string concatenation)
+    const subtotal = inv.items.reduce((sum, item) => {
+      const lineTotal = item.quantity * item.unitPrice;
+      return sum + lineTotal * (1 - item.discount / 100);
+    }, 0);
+    const grandTotal = subtotal - inv.discount + inv.tax;
+
+    // paidAmount & dueAmount derived from payment status
+    const paidAmount = inv.status === 'FULLPAID' ? grandTotal
+      : inv.status === 'HALFPAY' ? grandTotal / 2
+      : 0;
+    const dueAmount = grandTotal - paidAmount;
+
+    const now = new Date();
+    const invoiceDate = addDays(now, -(30 - invoiceCount * 10)); // Stagger dates
+    const invoiceDueDate = addDays(invoiceDate, 30);
+
+    const invoice = await prisma.invoice.upsert({
+      where: {
+        shopId_invoiceNumber: { shopId: shop.id, invoiceNumber: inv.invoiceNumber },
+      },
+      update: {
+        customerId: customer.id,
+        customerName: customer.name,
+        status: inv.status,
+        subtotal: Number(subtotal.toFixed(2)),
+        tax: Number(inv.tax.toFixed(2)),
+        discount: Number(inv.discount.toFixed(2)),
+        total: Number(grandTotal.toFixed(2)),
+        paidAmount: Number(paidAmount.toFixed(2)),
+        dueAmount: Number(dueAmount.toFixed(2)),
+        dueDate: invoiceDueDate,
+        paymentMethod: inv.status === 'UNPAID' ? 'CREDIT' : 'CASH',
+        salesChannel: 'ON_SITE',
+        notes: inv.notes,
+        createdById: admin.id,
+      },
+      create: {
+        invoiceNumber: inv.invoiceNumber,
+        shopId: shop.id,
+        customerId: customer.id,
+        customerName: customer.name,
+        status: inv.status,
+        subtotal: Number(subtotal.toFixed(2)),
+        tax: Number(inv.tax.toFixed(2)),
+        discount: Number(inv.discount.toFixed(2)),
+        total: Number(grandTotal.toFixed(2)),
+        paidAmount: Number(paidAmount.toFixed(2)),
+        dueAmount: Number(dueAmount.toFixed(2)),
+        date: invoiceDate,
+        dueDate: invoiceDueDate,
+        paymentMethod: inv.status === 'UNPAID' ? 'CREDIT' : 'CASH',
+        salesChannel: 'ON_SITE',
+        notes: inv.notes,
+        createdById: admin.id,
+      },
+    });
+
+    // Create items only if invoice has none (safe - doesn't duplicate on re-run)
+    const existingItems = await prisma.invoiceItem.findMany({ where: { invoiceId: invoice.id } });
+
+    if (existingItems.length === 0) {
+      await prisma.invoiceItem.createMany({
+        data: inv.items.map((item) => {
+          const productId = item.itemType === 'PRODUCT'
+            ? (productByName.get(item.productName) || null)
+            : null;
+          const lineTotal = item.quantity * item.unitPrice;
+          const total = lineTotal * (1 - item.discount / 100);
+          return {
+            invoiceId: invoice.id,
+            productId,
+            productName: item.productName,
+            quantity: item.quantity,
+            unitPrice: Number(item.unitPrice.toFixed(2)),
+            originalPrice: Number(item.unitPrice.toFixed(2)),
+            discount: Number(0),
+            total: Number(total.toFixed(2)),
+          };
+        }),
+      });
+    }
+
+    invoiceCount++;
+    console.log(`   ✅ ${inv.invoiceNumber} (${inv.status})`);
+  }
+  console.log(`   ✅ Ensured ${invoiceCount} sample invoices\n`);
 
   // ─────────────────────────────────────────────
   // Done

@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma';
 import { AppError } from '../middleware/errorHandler';
 import { Prisma, QuotationStatus, QuotationItemType } from '@prisma/client';
+import { generateUniqueDocumentNumber } from '../lib/documentNumber';
 
 export interface QuotationItemInput {
   itemType?: QuotationItemType;
@@ -24,20 +25,15 @@ export interface QuotationQueryParams {
   sortOrder?: 'asc' | 'desc';
 }
 
-// Generate QUO-YYYY-XXXX with uniqueness retry
-const generateQuotationNumber = async (shopId: string): Promise<string> => {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const count = await prisma.quotation.count({ where: { shopId } });
-    const year = new Date().getFullYear();
-    const sequence = (count + 1).toString().padStart(4, '0');
-    const qNumber = `QUO-${year}-${sequence}`;
+// Generate unique 10-digit quotation number with collision check
+export const generateQuotationNumber = async (shopId: string): Promise<string> => {
+  return generateUniqueDocumentNumber(shopId, async (number) => {
     const existing = await prisma.quotation.findUnique({
-      where: { shopId_quotationNumber: { shopId, quotationNumber: qNumber } },
+      where: { shopId_quotationNumber: { shopId, quotationNumber: number } },
       select: { id: true },
     });
-    if (!existing) return qNumber;
-  }
-  return `QUO-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+    return !!existing;
+  });
 };
 
 const calculateTotals = (
@@ -128,8 +124,9 @@ export class QuotationService {
     validityDate?: string;
     notes?: string;
     terms?: string;
+    quotationNumber?: string;
   }) {
-    const { customerId, items, status = 'DRAFT', discountTotal = 0, taxTotal = 0, validityDate, notes, terms } = data;
+    const { customerId, items, status = 'DRAFT', discountTotal = 0, taxTotal = 0, validityDate, notes, terms, quotationNumber: clientQuotationNumber } = data;
 
     if (!items || items.length === 0) throw new AppError('At least one item is required', 400);
 
@@ -151,7 +148,18 @@ export class QuotationService {
     }));
 
     const { subtotal, grandTotal, itemTotals } = calculateTotals(validatedItems, Number(discountTotal) || 0, Number(taxTotal) || 0);
-    const quotationNumber = await generateQuotationNumber(shopId);
+
+    // 🔒 STRICT: If the client supplied a valid 10-digit document number, USE IT EXACTLY.
+    // Only generate a fallback number when the payload did not supply one.
+    let quotationNumber = '';
+    if (clientQuotationNumber !== undefined && clientQuotationNumber !== null && clientQuotationNumber !== '') {
+      if (typeof clientQuotationNumber !== 'string' || !/^\d{10}$/.test(clientQuotationNumber)) {
+        throw new AppError('Quotation number must be a 10-digit numeric string', 400);
+      }
+      quotationNumber = clientQuotationNumber;
+    } else {
+      quotationNumber = await generateQuotationNumber(shopId);
+    }
 
     const quotation = await prisma.$transaction(async (tx) => {
       return tx.quotation.create({
