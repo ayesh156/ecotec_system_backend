@@ -98,8 +98,17 @@ app.use(helmet({
     },
   } : false,
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
   hsts: isProduction ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
 }));
+
+// 2a. Cross-Origin-Resource-Policy headers for static uploads (allow image rendering on other origins)
+const uploadsPath = path.join(process.cwd(), 'uploads');
+const setCrossOriginResourceHeaders = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  next();
+};
 
 // 3. Cookie parser - Required for refresh token cookies
 app.use(cookieParser());
@@ -172,8 +181,8 @@ const API_PREFIX = '/api/v1';
 // ===================================
 // STATIC FILE SERVING
 // ===================================
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads'))); // Legacy support
-app.use(`${API_PREFIX}/uploads`, express.static(path.join(process.cwd(), 'uploads'))); // Proxied via NGINX
+app.use('/uploads', setCrossOriginResourceHeaders, express.static(uploadsPath)); // Legacy support
+app.use(`${API_PREFIX}/uploads`, setCrossOriginResourceHeaders, express.static(uploadsPath)); // Proxied via NGINX
 
 // Serve production frontend build assets in production mode
 if (isProduction) {

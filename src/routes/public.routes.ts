@@ -14,13 +14,28 @@ const router = Router();
 // ==========================================
 router.get('/products', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const shopId = getShopId();
-    const { search, categoryId, brandId, page = '1', limit = '50', sortBy = 'name', sortOrder = 'asc' } = req.query;
+    const { shopId: shopIdParam, shopSlug, search, categoryId, brandId, page = '1', limit = '50', sortBy = 'name', sortOrder = 'asc' } = req.query;
 
-    // Only return products with stock > 0 for the public website
+    // Resolve the target shop: prefer explicit shopId/shopSlug query params,
+    // otherwise fall back to the default shop record so the storefront is never empty.
+    let targetShopId: string;
+    if (shopIdParam && typeof shopIdParam === 'string') {
+      targetShopId = shopIdParam;
+    } else if (shopSlug && typeof shopSlug === 'string') {
+      const shopBySlug = await prisma.shop.findFirst({ where: { slug: shopSlug } });
+      if (!shopBySlug) {
+        return res.status(404).json({ success: false, message: 'Shop not found' });
+      }
+      targetShopId = shopBySlug.id;
+    } else {
+      const defaultShop = await prisma.shop.findFirst();
+      targetShopId = defaultShop?.id ?? getShopId();
+    }
+
+    // Return all products for the shop so newly added products
+    // appear immediately on the public storefront.
     const where: any = { 
-      shopId,
-      stock: { gt: 0 },
+      shopId: targetShopId,
     };
 
     if (search && typeof search === 'string') {
