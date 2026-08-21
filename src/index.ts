@@ -43,6 +43,7 @@ import shopRoutes from './routes/shop.routes';
 import shopAdminRoutes from './routes/shopAdmin.routes';
 import supplierRoutes from './routes/supplier.routes';
 import grnRoutes from './routes/grn.routes';
+import estimateRoutes from './routes/estimate.routes';
 import uploadRoutes from './routes/upload.routes';
 import publicRoutes from './routes/public.routes';
 
@@ -284,6 +285,7 @@ app.use(`${API_PREFIX}/shops`, shopRoutes);
 app.use(`${API_PREFIX}/shop-admin`, shopAdminRoutes);
 app.use(`${API_PREFIX}/suppliers`, supplierRoutes);
 app.use(`${API_PREFIX}/grns`, grnRoutes);
+app.use(`${API_PREFIX}/estimates`, estimateRoutes);
 app.use(`${API_PREFIX}/public`, publicRoutes);
 app.use(`${API_PREFIX}/upload`, uploadRoutes);
 

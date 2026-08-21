@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { quotationService } from '../services/quotation.service';
+import { toJSON } from '../lib/serializer';
 import { getShopId } from '../lib/shopId';
 import { AuthRequest } from '../types/express';
 
@@ -23,7 +24,7 @@ export const getAllQuotations = async (req: Request, res: Response, next: NextFu
 
     res.json({
       success: true,
-      data: result.data,
+      data: toJSON(result.data),
       pagination: result.pagination,
     });
   } catch (error) {
@@ -36,7 +37,7 @@ export const getQuotationById = async (req: Request, res: Response, next: NextFu
   try {
     const shopId = getShopId();
     const quotation = await quotationService.getById(shopId, req.params.id);
-    res.json({ success: true, data: quotation });
+    res.json({ success: true, data: toJSON(quotation) });
   } catch (error) {
     next(error);
   }
@@ -47,7 +48,7 @@ export const createQuotation = async (req: AuthRequest, res: Response, next: Nex
   try {
     const shopId = getShopId();
     const quotation = await quotationService.create(shopId, req.user?.id, req.body);
-    res.status(201).json({ success: true, message: 'Quotation created successfully', data: quotation });
+    res.status(201).json({ success: true, message: 'Quotation created successfully', data: toJSON(quotation) });
   } catch (error) {
     next(error);
   }
@@ -58,7 +59,7 @@ export const updateQuotation = async (req: Request, res: Response, next: NextFun
   try {
     const shopId = getShopId();
     const quotation = await quotationService.update(shopId, req.params.id, req.body);
-    res.json({ success: true, message: 'Quotation updated successfully', data: quotation });
+    res.json({ success: true, message: 'Quotation updated successfully', data: toJSON(quotation) });
   } catch (error) {
     next(error);
   }
@@ -84,7 +85,7 @@ export const convertQuotationToInvoice = async (req: AuthRequest, res: Response,
     res.status(201).json({
       success: true,
       message: 'Quotation converted to invoice successfully',
-      data: { invoice: result.invoice, quotation: result.quotation },
+      data: toJSON({ invoice: result.invoice, quotation: result.quotation }),
     });
   } catch (error) {
     next(error);
@@ -96,7 +97,7 @@ export const getQuotationStats = async (req: Request, res: Response, next: NextF
   try {
     const shopId = getShopId();
     const data = await quotationService.getStats(shopId);
-    res.json({ success: true, data });
+    res.json({ success: true, data: toJSON(data) });
   } catch (error) {
     next(error);
   }

@@ -77,6 +77,7 @@ model Shop {
   grns          GRN[]
   grnPayments   GRNPayment[]
   quotations    Quotation[]
+  estimates     Estimate[]
 
   @@map("shops")
 }
@@ -107,6 +108,7 @@ model User {
   grnsCreated       GRN[]      @relation("GRNCreatedBy")
   grnPaymentsRecorded GRNPayment[]
   quotationsCreated Quotation[] @relation("QuotationCreatedBy")
+  estimatesCreated  Estimate[] @relation("EstimateCreatedBy")
   refreshTokens     RefreshToken[]
 
   @@index([shopId])
@@ -199,6 +201,7 @@ model Customer {
   invoices      Invoice[]
   payments      CustomerPaymentRecord[]
   quotations    Quotation[]
+  estimates     Estimate[]
 
   @@index([shopId])
   @@index([phone])
@@ -361,6 +364,7 @@ model Product {
   priceHistory    PriceHistory[]
   grnItems        GRNItem[]
   quotationItems  QuotationItem[]
+  estimateItems   EstimateItem[]
 
   @@unique([shopId, barcode])  // Unique barcode per shop
   @@index([shopId])
@@ -962,4 +966,95 @@ model QuotationItem {
   @@index([quotationId])
   @@index([productId])
   @@map("quotation_items")
+}
+
+// ==========================================
+// ESTIMATE / PRICING PROPOSAL MANAGEMENT
+// ==========================================
+
+enum EstimateStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CONVERTED
+}
+
+enum EstimateItemType {
+  PRODUCT
+  SERVICE
+}
+
+model Estimate {
+  id              String          @id @default(cuid())
+  estimateNumber  String          // e.g. EST-2026-0001
+
+  // Shop relation
+  shopId          String
+  shop            Shop            @relation(fields: [shopId], references: [id])
+
+  // Customer relation
+  customerId      String
+  customer        Customer        @relation(fields: [customerId], references: [id])
+
+  // Status
+  status          EstimateStatus  @default(DRAFT)
+
+  // Amounts — all monetary columns use Decimal(12, 2)
+  subtotal        Decimal         @db.Decimal(12, 2)
+  discountTotal   Decimal         @default(0) @db.Decimal(12, 2)
+  taxTotal        Decimal         @default(0) @db.Decimal(12, 2)
+  grandTotal      Decimal         @db.Decimal(12, 2)
+
+  // Details
+  notes           String?         @db.Text
+  terms           String?         @db.Text
+  internalNotes   String?         @db.Text
+  validityDate    DateTime?
+
+  // Audit
+  createdById     String?
+  createdBy       User?           @relation("EstimateCreatedBy", fields: [createdById], references: [id])
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  items           EstimateItem[]
+
+  @@unique([shopId, estimateNumber])
+  @@index([shopId])
+  @@index([customerId])
+  @@index([status])
+  @@map("estimates")
+}
+
+model EstimateItem {
+  id              String            @id @default(cuid())
+
+  // Estimate relation
+  estimateId      String
+  estimate        Estimate          @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+
+  // Item type
+  itemType        EstimateItemType  @default(PRODUCT)
+
+  // Optional relations
+  productId       String?
+  product         Product?          @relation(fields: [productId], references: [id])
+  serviceId       String?           // Reference for service items (no dedicated Service model yet)
+
+  // Item snapshot
+  description     String
+  quantity        Int               @default(1)
+  unitPrice       Decimal           @db.Decimal(12, 2)
+  discount        Decimal           @default(0) @db.Decimal(12, 2)
+  total           Decimal           @db.Decimal(12, 2)
+
+  createdAt       DateTime          @default(now())
+
+  @@index([estimateId])
+  @@index([productId])
+  @@map("estimate_items")
 }
