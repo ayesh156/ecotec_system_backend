@@ -1,21 +1,20 @@
 /**
- * Category Routes - World-Class CRUD Operations
- * Category management for product organization
- * 
- * Features:
- * - Full CRUD with shop isolation (single-shop mode)
- * - Search and pagination
- * - Product count tracking
+ * Category Routes - Thin routing layer.
+ * All business logic lives in the CategoryService; handlers delegate to controllers.
  */
 
-import { Router, Request, Response, NextFunction } from 'express';
-import { prisma } from '../lib/prisma';
+import { Router } from 'express';
 import { protect, authorize } from '../middleware/auth';
-import type { AuthRequest } from '../middleware/auth';
 import { body } from 'express-validator';
 import { handleValidationErrors } from '../middleware/validation';
 import { sensitiveRateLimiter } from '../middleware/rateLimiter';
-import { getShopId } from '../lib/shopId';
+import {
+  getAllCategories,
+  getCategoryById,
+  createCategory,
+  updateCategory,
+  deleteCategory,
+} from '../controllers/category.controller';
 
 const router = Router();
 
@@ -42,212 +41,19 @@ const validateCategory = [
   handleValidationErrors,
 ];
 
-// ==========================================
 // GET /categories - List all categories
-// ==========================================
-router.get('/', async (req, res, next) => {
-  try {
-    const shopId = getShopId();
-    const { search, page = '1', limit = '50' } = req.query;
+router.get('/', getAllCategories);
 
-    // Build where clause
-    const where: any = { shopId };
-
-    // Search filter
-    if (search && typeof search === 'string') {
-      where.name = { contains: search, mode: 'insensitive' };
-    }
-
-    // Pagination
-    const pageNum = Math.max(1, parseInt(page as string) || 1);
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 50));
-    const skip = (pageNum - 1) * limitNum;
-
-    const [categories, total] = await Promise.all([
-      prisma.category.findMany({
-        where,
-        orderBy: { name: 'asc' },
-        skip,
-        take: limitNum,
-        include: {
-          _count: {
-            select: { products: true }
-          }
-        }
-      }),
-      prisma.category.count({ where }),
-    ]);
-    
-    res.json({
-      success: true,
-      data: categories,
-      pagination: {
-        page: pageNum,
-        limit: limitNum,
-        total,
-        totalPages: Math.ceil(total / limitNum),
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// ==========================================
 // GET /categories/:id - Get single category
-// ==========================================
-router.get('/:id', async (req, res, next) => {
-  try {
-    const shopId = getShopId();
-    const { id } = req.params;
+router.get('/:id', getCategoryById);
 
-    const category = await prisma.category.findUnique({
-      where: { id },
-      include: {
-        _count: {
-          select: { products: true }
-        }
-      }
-    });
-    
-    if (!category) {
-      return res.status(404).json({ success: false, message: 'Category not found' });
-    }
-    
-    if (category.shopId !== shopId) {
-      return res.status(403).json({ success: false, message: 'Category does not belong to your shop' });
-    }
-    
-    res.json({ success: true, data: category });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// ==========================================
 // POST /categories - Create new category
-// ==========================================
-router.post('/', sensitiveRateLimiter, validateCategory, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const shopId = getShopId();
-    const { name, description, image, isActive } = req.body;
+router.post('/', sensitiveRateLimiter, validateCategory, createCategory);
 
-    // Check for duplicate name in same shop
-    const existing = await prisma.category.findFirst({
-      where: { shopId, name: { equals: name } }
-    });
-    if (existing) {
-      return res.status(409).json({ 
-        success: false, 
-        message: 'A category with this name already exists' 
-      });
-    }
-
-    const category = await prisma.category.create({
-      data: {
-        name,
-        description,
-        image,
-        isActive: isActive !== undefined ? isActive : true,
-        shopId,
-      },
-      include: {
-        _count: {
-          select: { products: true }
-        }
-      }
-    });
-    
-    res.status(201).json({ success: true, data: category });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// ==========================================
 // PUT /categories/:id - Update category
-// ==========================================
-router.put('/:id', validateCategory, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const shopId = getShopId();
-    const { id } = req.params;
+router.put('/:id', validateCategory, updateCategory);
 
-    const existing = await prisma.category.findUnique({ where: { id } });
-    
-    if (!existing) {
-      return res.status(404).json({ success: false, message: 'Category not found' });
-    }
-    
-    if (existing.shopId !== shopId) {
-      return res.status(403).json({ success: false, message: 'Category does not belong to your shop' });
-    }
-
-    const { name, description, image, isActive } = req.body;
-
-    // Check for duplicate name (excluding current category)
-    if (name && name.toLowerCase() !== existing.name.toLowerCase()) {
-      const duplicate = await prisma.category.findFirst({
-        where: { shopId, name: { equals: name }, NOT: { id } }
-      });
-      if (duplicate) {
-        return res.status(409).json({ 
-          success: false, 
-          message: 'A category with this name already exists' 
-        });
-      }
-    }
-
-    const category = await prisma.category.update({
-      where: { id },
-      data: { name, description, image, ...(isActive !== undefined && { isActive }) },
-      include: {
-        _count: {
-          select: { products: true }
-        }
-      }
-    });
-    
-    res.json({ success: true, data: category });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// ==========================================
 // DELETE /categories/:id - Delete category (Admin only)
-// ==========================================
-router.delete('/:id', authorize('ADMIN'), async (req, res, next) => {
-  try {
-    const shopId = getShopId();
-    const { id } = req.params;
-
-    const existing = await prisma.category.findUnique({
-      where: { id },
-      include: { _count: { select: { products: true } } }
-    });
-    
-    if (!existing) {
-      return res.status(404).json({ success: false, message: 'Category not found' });
-    }
-    
-    if (existing.shopId !== shopId) {
-      return res.status(403).json({ success: false, message: 'Category does not belong to your shop' });
-    }
-
-    // Check if category has products
-    if (existing._count.products > 0) {
-      return res.status(409).json({ 
-        success: false, 
-        message: `Cannot delete category with ${existing._count.products} products. Reassign products first.` 
-      });
-    }
-
-    await prisma.category.delete({ where: { id } });
-    
-    res.json({ success: true, message: 'Category deleted successfully' });
-  } catch (error) {
-    next(error);
-  }
-});
+router.delete('/:id', authorize('ADMIN'), deleteCategory);
 
 export default router;

@@ -1,16 +1,20 @@
 /**
- * Customer Routes - World-Class CRUD Operations
- * Customer management with shop isolation (single-shop mode)
+ * Customer Routes - Thin routing layer.
+ * All business logic lives in the CustomerService; handlers delegate to controllers.
  */
 
-import { Router, Request, Response, NextFunction } from 'express';
-import { prisma } from '../lib/prisma';
+import { Router } from 'express';
 import { protect, authorize } from '../middleware/auth';
-import type { AuthRequest } from '../middleware/auth';
 import { body } from 'express-validator';
 import { handleValidationErrors } from '../middleware/validation';
 import { sensitiveRateLimiter } from '../middleware/rateLimiter';
-import { getShopId } from '../lib/shopId';
+import {
+  getAllCustomers,
+  getCustomerById,
+  createCustomer,
+  updateCustomer,
+  deleteCustomer,
+} from '../controllers/customer.controller';
 
 const router = Router();
 
@@ -24,109 +28,18 @@ const validateCustomer = [
 ];
 
 // GET /customers - List all customers
-router.get('/', async (req, res, next) => {
-  try {
-    const shopId = getShopId();
-    const { search, page = '1', limit = '20' } = req.query;
-
-    // NOTE: Prisma's `mode: 'insensitive'` is only supported on PostgreSQL and
-    // throws a runtime error on MySQL. MySQL's default utf8mb4_unicode_ci
-    // collation already performs case-insensitive matching for `contains`,
-    // so we use the plain form which works on both providers.
-    const where: any = { shopId };
-    if (search && typeof search === 'string') {
-      where.OR = [
-        { name: { contains: search } },
-        { phone: { contains: search } },
-        { email: { contains: search } },
-        { nic: { contains: search } },
-      ];
-    }
-
-    const pageNum = Math.max(1, parseInt(page as string) || 1);
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 20));
-    const skip = (pageNum - 1) * limitNum;
-
-    const [customers, total] = await Promise.all([
-      prisma.customer.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limitNum,
-      }),
-      prisma.customer.count({ where }),
-    ]);
-
-    res.json({ success: true, data: customers, pagination: { page: pageNum, limit: limitNum, total, totalPages: Math.ceil(total / limitNum) } });
-  } catch (error) { next(error); }
-});
+router.get('/', getAllCustomers);
 
 // GET /customers/:id - Get single customer
-router.get('/:id', async (req, res, next) => {
-  try {
-    const shopId = getShopId();
-    const { id } = req.params;
-
-    const customer = await prisma.customer.findUnique({
-      where: { id },
-      include: { _count: { select: { invoices: true, payments: true } } }
-    });
-
-    if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
-    if (customer.shopId !== shopId) return res.status(403).json({ success: false, message: 'Customer does not belong to your shop' });
-
-    res.json({ success: true, data: customer });
-  } catch (error) { next(error); }
-});
+router.get('/:id', getCustomerById);
 
 // POST /customers - Create new customer
-router.post('/', sensitiveRateLimiter, validateCustomer, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const shopId = getShopId();
-    const { name, email, phone, address, nic, customerType, creditLimit, notes } = req.body;
-
-    const customer = await prisma.customer.create({
-      data: { name, email, phone, address, nic, customerType, creditLimit: creditLimit || 0, notes, shopId },
-    });
-
-    res.status(201).json({ success: true, data: customer });
-  } catch (error) { next(error); }
-});
+router.post('/', sensitiveRateLimiter, validateCustomer, createCustomer);
 
 // PUT /customers/:id - Update customer
-router.put('/:id', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const shopId = getShopId();
-    const { id } = req.params;
-
-    const existing = await prisma.customer.findUnique({ where: { id } });
-    if (!existing) return res.status(404).json({ success: false, message: 'Customer not found' });
-    if (existing.shopId !== shopId) return res.status(403).json({ success: false, message: 'Customer does not belong to your shop' });
-
-    const { name, email, phone, address, nic, customerType, creditLimit, creditBalance, notes, isActive } = req.body;
-
-    const customer = await prisma.customer.update({
-      where: { id },
-      data: { name, email, phone, address, nic, customerType, creditLimit, creditBalance, notes },
-    });
-
-    res.json({ success: true, data: customer });
-  } catch (error) { next(error); }
-});
+router.put('/:id', updateCustomer);
 
 // DELETE /customers/:id - Delete customer (Admin only)
-router.delete('/:id', authorize('ADMIN'), async (req, res, next) => {
-  try {
-    const shopId = getShopId();
-    const { id } = req.params;
-
-    const existing = await prisma.customer.findUnique({ where: { id } });
-    if (!existing) return res.status(404).json({ success: false, message: 'Customer not found' });
-    if (existing.shopId !== shopId) return res.status(403).json({ success: false, message: 'Customer does not belong to your shop' });
-
-    await prisma.customer.delete({ where: { id } });
-    res.json({ success: true, message: 'Customer deleted successfully' });
-  } catch (error) { next(error); }
-});
+router.delete('/:id', authorize('ADMIN'), deleteCustomer);
 
 export default router;
