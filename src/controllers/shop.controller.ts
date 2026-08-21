@@ -151,16 +151,23 @@ export const getShopSections = async (req: Request, res: Response, next: NextFun
 export const updateShopSections = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
-    const { adminHiddenSections } = req.body;
+    const { hiddenSections, adminHiddenSections } = req.body;
     const authReq = req as AuthRequest;
     const userRole = authReq.user?.role;
 
     const existingShop = await prisma.shop.findUnique({ where: { id } });
     if (!existingShop) return res.status(404).json({ success: false, error: 'Shop not found' });
 
-    const updateData: { adminHiddenSections?: string[] } = {};
+    const updateData: { hiddenSections?: string[]; adminHiddenSections?: string[] } = {};
 
-    if ((userRole === 'ADMIN') && adminHiddenSections !== undefined) {
+    // hiddenSections: SuperAdmin managed - hidden from ADMIN + USER
+    if (userRole === 'SUPER_ADMIN' && hiddenSections !== undefined) {
+      if (!Array.isArray(hiddenSections)) return res.status(400).json({ success: false, error: 'hiddenSections must be an array of strings' });
+      updateData.hiddenSections = hiddenSections;
+    }
+
+    // adminHiddenSections: Shop ADMIN managed - hidden from USER only
+    if (userRole === 'ADMIN' && adminHiddenSections !== undefined) {
       if (!Array.isArray(adminHiddenSections)) return res.status(400).json({ success: false, error: 'adminHiddenSections must be an array of strings' });
       updateData.adminHiddenSections = adminHiddenSections;
     }
@@ -173,7 +180,15 @@ export const updateShopSections = async (req: Request, res: Response, next: Next
       select: { id: true, hiddenSections: true, adminHiddenSections: true },
     });
 
-    res.json({ success: true, message: 'Section visibility updated successfully', ...updatedShop });
+    res.json({
+      success: true,
+      message: 'Section visibility updated successfully',
+      data: {
+        id: updatedShop.id,
+        hiddenSections: updatedShop.hiddenSections || [],
+        adminHiddenSections: updatedShop.adminHiddenSections || [],
+      },
+    });
   } catch (error) { next(error); }
 };
 

@@ -32,6 +32,8 @@ import {
   CustomerType,
   QuotationStatus,
   QuotationItemType,
+  EstimateStatus,
+  EstimateItemType,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -53,11 +55,28 @@ const CONFIG = {
   DEFAULT_SHOP_ID: process.env.DEFAULT_SHOP_ID || '',
 };
 
+/**
+ * Pending Mock Modules (Hidden by default until implemented):
+ * - Job Notes, Services, Warranties, Cash Management, Reports, Data Export
+ * Active Completed Modules (Visible by default):
+ *   Dashboard, Invoices, Quotations, Estimates, Products, Categories,
+ *   Brands, Customers, Suppliers, GRN, Settings, Users, Technicians, Productivity
+ */
 const DEFAULT_HIDDEN_SECTIONS = [
-  '/job-notes', '/services', '/service-categories', '/quotations',
-  '/estimates', '/warranties', '/cash-management/transactions',
-  '/cash-management/accounts', '/cash-management/insights',
-  '/reports', '/pricing-proposals', '/notes', '/calendar', '/data-export',
+  // Job Notes module (mock-only)
+  '/job-notes',
+  // Services module (mock-only)
+  '/services', '/service-categories',
+  // Warranties module (mock-only)
+  '/warranties',
+  // Cash Management module (mock-only)
+  '/cash-management/transactions',
+  '/cash-management/accounts',
+  '/cash-management/insights',
+  // Reports module (mock-only)
+  '/reports',
+  // Data Export module (mock-only)
+  '/data-export',
 ];
 
 async function hashPassword(password: string): Promise<string> {
@@ -78,6 +97,10 @@ function addDays(date: Date, days: number): Date {
 
 function generateQuotationNumber(index: number, year: number = 2026): string {
   return `QUO-${year}-${String(index).padStart(4, '0')}`;
+}
+
+function generateEstimateNumber(index: number, year: number = 2026): string {
+  return `EST-${year}-${String(index).padStart(4, '0')}`;
 }
 
 // ==========================================
@@ -209,6 +232,108 @@ interface SeedQuotation {
   terms: string;
   items: SeedQuotationItem[];
 }
+
+interface SeedEstimateItem {
+  itemType: EstimateItemType;
+  productName: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  discount: number;
+}
+
+interface SeedEstimate {
+  estimateNumber: string;
+  customerIndex: number; // index into CUSTOMERS_DATA
+  status: EstimateStatus;
+  discountTotal: number;
+  taxTotal: number;
+  validityDays: number;
+  notes: string;
+  terms: string;
+  internalNotes: string;
+  items: SeedEstimateItem[];
+}
+
+const ESTIMATES_DATA: SeedEstimate[] = [
+  {
+    estimateNumber: generateEstimateNumber(1),
+    customerIndex: 0, // Kamal Perera
+    status: 'DRAFT',
+    discountTotal: 0,
+    taxTotal: 0,
+    validityDays: 30,
+    notes: 'Draft estimate - hardware upgrade for existing customer setup.',
+    terms: 'This estimate is valid for 30 days from the date of issue.\nPrices are subject to change without prior notice.\nPayment terms: 50% advance, 50% on delivery.',
+    internalNotes: 'Customer mentioned possibly needing a larger SSD - follow up before finalizing.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'Samsung 970 EVO 500GB SSD', description: 'NVMe SSD upgrade for existing laptop', quantity: 1, unitPrice: 35000, discount: 0 },
+      { itemType: 'PRODUCT', productName: 'Kingston 8GB DDR4 RAM', description: 'Memory upgrade - 8GB DDR4 SODIMM', quantity: 2, unitPrice: 9500, discount: 0 },
+      { itemType: 'SERVICE', productName: 'Data Migration Service', description: 'Clone existing HDD and migrate OS to new SSD', quantity: 1, unitPrice: 6000, discount: 0 },
+    ],
+  },
+  {
+    estimateNumber: generateEstimateNumber(2),
+    customerIndex: 1, // Nimal Silva
+    status: 'SENT',
+    discountTotal: 2500,
+    taxTotal: 0,
+    validityDays: 30,
+    notes: 'Estimate emailed to nimal.silva@yahoo.com. Awaiting confirmation.',
+    terms: 'This estimate is valid for 30 days from the date of issue.\nPrices are subject to change without prior notice.\nPayment terms: 50% advance, 50% on delivery.',
+    internalNotes: 'Offered small discount to close the deal.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'TP-Link Archer AX50', description: 'AX3000 WiFi 6 router replacement', quantity: 1, unitPrice: 18500, discount: 3 },
+      { itemType: 'PRODUCT', productName: 'Logitech MK270 Combo', description: 'Wireless keyboard and mouse combo', quantity: 1, unitPrice: 8500, discount: 0 },
+    ],
+  },
+  {
+    estimateNumber: generateEstimateNumber(3),
+    customerIndex: 2, // ABC Computers
+    status: 'ACCEPTED',
+    discountTotal: 10000,
+    taxTotal: 0,
+    validityDays: 30,
+    notes: 'Accepted by ABC Computers. Awaiting purchase order to convert to invoice.',
+    terms: 'This estimate is valid for 30 days from the date of issue.\nBulk pricing applied for wholesale customers.\nPayment terms: Net 30 days after delivery.',
+    internalNotes: 'Wholesale pricing agreed. Confirm stock availability before delivery.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'HP LaserJet Pro M404n', description: 'Network laser printer for office', quantity: 2, unitPrice: 85000, discount: 3 },
+      { itemType: 'PRODUCT', productName: 'HP Pavilion 15', description: 'Refurbished HP Pavilion 15 for rental fleet', quantity: 3, unitPrice: 185000, discount: 2 },
+    ],
+  },
+  {
+    estimateNumber: generateEstimateNumber(4),
+    customerIndex: 3, // Lanka Insurance PLC
+    status: 'SENT',
+    discountTotal: 0,
+    taxTotal: 0,
+    validityDays: 45,
+    notes: 'Corporate estimate submitted to IT procurement. Valid for 45 days.',
+    terms: 'This estimate is valid for 45 days from the date of issue.\nCorporate pricing terms apply.\nPayment terms: Net 30 days after delivery.',
+    internalNotes: 'Follow up with procurement by end of month.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'Dell Inspiron 15', description: 'Standard office laptops - 10 units', quantity: 10, unitPrice: 175000, discount: 0 },
+      { itemType: 'PRODUCT', productName: 'LG 27" IPS Monitor', description: 'Additional monitors for dual-screen setup', quantity: 5, unitPrice: 65000, discount: 0 },
+    ],
+  },
+  {
+    estimateNumber: generateEstimateNumber(5),
+    customerIndex: 4, // Dr. Saman Wickramasinghe
+    status: 'DRAFT',
+    discountTotal: 3000,
+    taxTotal: 0,
+    validityDays: 30,
+    notes: 'Draft upgrade proposal for home office - pending final approval.',
+    terms: 'This estimate is valid for 30 days from the date of issue.\nPrices are subject to change without prior notice.\nPayment terms: 50% advance, 50% on delivery.',
+    internalNotes: 'VIP customer - arrange priority installation.',
+    items: [
+      { itemType: 'PRODUCT', productName: 'Apple iPhone 15', description: 'Apple iPhone 15 128GB - Black', quantity: 1, unitPrice: 385000, discount: 0 },
+      { itemType: 'PRODUCT', productName: 'HP EliteBook 840', description: 'Replacement laptop for home office', quantity: 1, unitPrice: 295000, discount: 1 },
+      { itemType: 'SERVICE', productName: 'Priority Setup & Data Transfer', description: 'Complete setup, data migration and configuration', quantity: 1, unitPrice: 12000, discount: 0 },
+    ],
+  },
+];
 
 const QUOTATIONS_DATA: SeedQuotation[] = [
   {
@@ -588,6 +713,101 @@ async function main() {
     console.log(`   ✅ ${q.quotationNumber} (${q.status})`);
   }
   console.log(`   ✅ Ensured ${quotationCount} sample quotations\n`);
+
+  // ─────────────────────────────────────────────
+  // 9. Sample Estimates (upsert on shopId_estimateNumber)
+  //    - Links to existing customers and products
+  // ─────────────────────────────────────────────
+  console.log('📌 Ensuring Sample Estimates...');
+  let estimateCount = 0;
+
+  // Reuse product lookup built for quotations (productByName map)
+
+  for (const e of ESTIMATES_DATA) {
+    const customerData = CUSTOMERS_DATA[e.customerIndex];
+    const customer = await prisma.customer.findFirst({
+      where: { phone: customerData.phone, shopId: shop.id },
+    });
+
+    if (!customer) {
+      console.log(`   ⚠️  Skipping estimate ${e.estimateNumber} - customer not found`);
+      continue;
+    }
+
+    // Calculate totals
+    const subtotal = e.items.reduce((sum, item) => {
+      const lineTotal = item.quantity * item.unitPrice;
+      return sum + lineTotal * (1 - item.discount / 100);
+    }, 0);
+    const grandTotal = subtotal - e.discountTotal + e.taxTotal;
+
+    const now = new Date();
+    const estimateDate = addDays(now, -(30 - estimateCount * 7)); // Stagger dates
+    const validityDate = addDays(estimateDate, e.validityDays);
+
+    // Upsert estimate
+    const estimate = await prisma.estimate.upsert({
+      where: {
+        shopId_estimateNumber: { shopId: shop.id, estimateNumber: e.estimateNumber },
+      },
+      update: {
+        customerId: customer.id,
+        status: e.status,
+        subtotal,
+        discountTotal: e.discountTotal,
+        taxTotal: e.taxTotal,
+        grandTotal,
+        validityDate,
+        notes: e.notes,
+        terms: e.terms,
+        internalNotes: e.internalNotes,
+      },
+      create: {
+        estimateNumber: e.estimateNumber,
+        shopId: shop.id,
+        customerId: customer.id,
+        status: e.status,
+        subtotal,
+        discountTotal: e.discountTotal,
+        taxTotal: e.taxTotal,
+        grandTotal,
+        validityDate,
+        notes: e.notes,
+        terms: e.terms,
+        internalNotes: e.internalNotes,
+        createdById: admin.id,
+      },
+    });
+
+    // Create items only if estimate has none (safe - doesn't duplicate on re-run)
+    const existingItems = await prisma.estimateItem.findMany({ where: { estimateId: estimate.id } });
+
+    if (existingItems.length === 0) {
+      await prisma.estimateItem.createMany({
+        data: e.items.map((item, idx) => {
+          const productId = item.itemType === 'PRODUCT'
+            ? (productByName.get(item.productName) || null)
+            : null;
+          const lineTotal = item.quantity * item.unitPrice;
+          return {
+            estimateId: estimate.id,
+            itemType: item.itemType,
+            productId,
+            serviceId: item.itemType === 'SERVICE' ? `service-${idx + 1}` : null,
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            discount: item.discount,
+            total: lineTotal * (1 - item.discount / 100),
+          };
+        }),
+      });
+    }
+
+    estimateCount++;
+    console.log(`   ✅ ${e.estimateNumber} (${e.status})`);
+  }
+  console.log(`   ✅ Ensured ${estimateCount} sample estimates\n`);
 
   // ─────────────────────────────────────────────
   // Done

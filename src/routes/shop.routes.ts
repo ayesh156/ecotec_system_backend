@@ -111,8 +111,8 @@ router.get('/current/sections', protect, async (req, res, next) => {
   }
 });
 
-// Update hidden sections (Admin)
-router.put('/current/sections', protect, authorize('ADMIN'), sensitiveRateLimiter, async (req, res, next) => {
+// Update hidden sections (SuperAdmin manages hiddenSections, Admin manages adminHiddenSections)
+router.put('/current/sections', protect, authorize('ADMIN', 'SUPER_ADMIN'), sensitiveRateLimiter, async (req, res, next) => {
   try {
     const shopId = getShopId();
     req.params.id = shopId;
