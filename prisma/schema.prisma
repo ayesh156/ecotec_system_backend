@@ -32,8 +32,8 @@ model Shop {
   
   // Settings
   currency      String    @default("LKR")
-  taxRate       Float     @default(0)  // Default tax rate for invoices
-  
+  taxRate       Decimal   @default(0) @db.Decimal(12, 2)  // Default tax rate for invoices
+
   // Status
   isActive      Boolean   @default(true)
   
@@ -172,13 +172,13 @@ model Customer {
   nic           String?   // National Identity Card number
   
   // Purchase statistics
-  totalSpent    Float     @default(0)
+  totalSpent    Decimal   @default(0) @db.Decimal(12, 2)
   totalOrders   Int       @default(0)
   lastPurchase  DateTime?
   
   // Credit management (Naya system - common in SL shops)
-  creditBalance Float     @default(0)
-  creditLimit   Float     @default(0)
+  creditBalance Decimal   @default(0) @db.Decimal(12, 2)
+  creditLimit   Decimal   @default(0) @db.Decimal(12, 2)
   creditDueDate DateTime?
   creditStatus  CreditStatus @default(CLEAR)
   
@@ -226,7 +226,7 @@ model CustomerPaymentRecord {
   invoiceId     String?
   
   // Payment details
-  amount        Float
+  amount        Decimal   @db.Decimal(12, 2)
   paymentMethod PaymentMethod
   paymentDate   DateTime  @default(now())
   
@@ -315,10 +315,10 @@ model Product {
   description     String?   @db.Text
   
   // Pricing - Enhanced for GRN integration
-  price           Float     // Current selling price
-  costPrice       Float?    // Current cost/purchase price from latest GRN
-  lastCostPrice   Float?    // Previous cost price for comparison
-  profitMargin    Float?    // Calculated profit margin percentage
+  price           Decimal   @db.Decimal(12, 2) // Current selling price
+  costPrice       Decimal?  @db.Decimal(12, 2) // Current cost/purchase price from latest GRN
+  lastCostPrice   Decimal?  @db.Decimal(12, 2) // Previous cost price for comparison
+  profitMargin    Decimal?  @db.Decimal(12, 2) // Calculated profit margin percentage
   
   // Stock management
   stock           Int       @default(0)
@@ -388,7 +388,7 @@ model StockMovement {
   referenceType   String?   // 'grn' or 'invoice'
   
   // Price at the time of movement
-  unitPrice       Float?
+  unitPrice       Decimal?  @db.Decimal(12, 2)
   
   // Notes and audit
   notes           String?
@@ -424,10 +424,10 @@ model PriceHistory {
   
   // Change details
   changeType            PriceChangeType
-  previousCostPrice     Float?
-  newCostPrice          Float?
-  previousSellingPrice  Float?
-  newSellingPrice       Float?
+  previousCostPrice     Decimal?  @db.Decimal(12, 2)
+  newCostPrice          Decimal?  @db.Decimal(12, 2)
+  previousSellingPrice  Decimal?  @db.Decimal(12, 2)
+  newSellingPrice       Decimal?  @db.Decimal(12, 2)
   
   // Reason and reference
   reason                String?   // 'grn_purchase', 'manual_adjustment', 'promotion'
@@ -470,12 +470,12 @@ model Invoice {
   customerName  String        // Denormalized for quick access ("Walk-in Customer" for walk-ins)
   
   // Amounts
-  subtotal      Float
-  tax           Float         @default(0)
-  discount      Float         @default(0)
-  total         Float
-  paidAmount    Float         @default(0)
-  dueAmount     Float         @default(0)
+  subtotal      Decimal       @db.Decimal(12, 2)
+  tax           Decimal       @default(0) @db.Decimal(12, 2)
+  discount      Decimal       @default(0) @db.Decimal(12, 2)
+  total         Decimal       @db.Decimal(12, 2)
+  paidAmount    Decimal       @default(0) @db.Decimal(12, 2)
+  dueAmount     Decimal       @default(0) @db.Decimal(12, 2)
   
   // Status
   status        InvoiceStatus @default(UNPAID)
@@ -531,10 +531,10 @@ model InvoiceItem {
   
   // Quantities and pricing
   quantity        Int
-  unitPrice       Float
-  originalPrice   Float?    // Original price before any discount
-  discount        Float     @default(0)
-  total           Float
+  unitPrice       Decimal   @db.Decimal(12, 2)
+  originalPrice   Decimal?  @db.Decimal(12, 2) // Original price before any discount
+  discount        Decimal   @default(0) @db.Decimal(12, 2)
+  total           Decimal   @db.Decimal(12, 2)
   
   // Warranty
   warranty        String?        // Product warranty code/text (copied from product at time of purchase)
@@ -570,10 +570,10 @@ model InvoiceItemHistory {
   newQuantity     Int?                // null for REMOVE action
   
   // Price at time of change
-  unitPrice       Float
+  unitPrice       Decimal             @db.Decimal(12, 2)
   
   // Calculated impact (positive = added cost, negative = reduced cost)
-  amountChange    Float               // e.g., +15000 for add, -15000 for remove
+  amountChange    Decimal             @db.Decimal(12, 2) // e.g., +15000 for add, -15000 for remove
   
   // User who made the change
   changedById     String?
@@ -611,7 +611,7 @@ model InvoicePayment {
   invoice       Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   
   // Payment details
-  amount        Float
+  amount        Decimal       @db.Decimal(12, 2)
   paymentMethod PaymentMethod
   paymentDate   DateTime      @default(now())
   
@@ -779,12 +779,12 @@ model GRN {
   receivedDate  DateTime?                   // Actual received date
   
   // Amounts
-  subtotal      Float
-  tax           Float     @default(0)
-  discount      Float     @default(0)
-  totalAmount   Float
-  paidAmount    Float     @default(0) // If payment tracked directly on GRN
-    
+  subtotal      Decimal   @db.Decimal(12, 2)
+  tax           Decimal   @default(0) @db.Decimal(12, 2)
+  discount      Decimal   @default(0) @db.Decimal(12, 2)
+  totalAmount   Decimal   @db.Decimal(12, 2)
+  paidAmount    Decimal   @default(0) @db.Decimal(12, 2) // If payment tracked directly on GRN
+  
   // Status
   status        GRNStatus @default(DRAFT)
   paymentStatus PaymentStatus @default(UNPAID)
@@ -821,7 +821,7 @@ model GRNPayment {
   shop          Shop          @relation(fields: [shopId], references: [id])
   
   // Payment details
-  amount        Float
+  amount        Decimal       @db.Decimal(12, 2)
   paymentMethod PaymentMethod
   sentAt        DateTime      @default(now())
   
@@ -851,9 +851,9 @@ model GRNItem {
   
   // Snapshot data at time of GRN
   quantity      Int
-  costPrice     Float     // Unit cost
-  sellingPrice  Float?    // Optional: New selling price set during GRN
-  totalCost     Float
+  costPrice     Decimal   @db.Decimal(12, 2) // Unit cost
+  sellingPrice  Decimal?  @db.Decimal(12, 2) // Optional: New selling price set during GRN
+  totalCost     Decimal   @db.Decimal(12, 2)
   
   createdAt     DateTime  @default(now())
 
@@ -908,10 +908,10 @@ model Quotation {
   status          QuotationStatus @default(DRAFT)
 
   // Amounts
-  subtotal        Float
-  discountTotal   Float           @default(0)
-  taxTotal        Float           @default(0)
-  grandTotal      Float
+  subtotal        Decimal         @db.Decimal(12, 2)
+  discountTotal   Decimal         @default(0) @db.Decimal(12, 2)
+  taxTotal        Decimal         @default(0) @db.Decimal(12, 2)
+  grandTotal      Decimal         @db.Decimal(12, 2)
 
   // Details
   notes           String?         @db.Text
@@ -953,9 +953,9 @@ model QuotationItem {
   // Item snapshot
   description     String
   quantity        Int               @default(1)
-  unitPrice       Float
-  discount        Float             @default(0)
-  total           Float
+  unitPrice       Decimal           @db.Decimal(12, 2)
+  discount        Decimal           @default(0) @db.Decimal(12, 2)
+  total           Decimal           @db.Decimal(12, 2)
 
   createdAt       DateTime          @default(now())
 
@@ -963,4 +963,3 @@ model QuotationItem {
   @@index([productId])
   @@map("quotation_items")
 }
-
