@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "npm run prisma:generate && npx tsc",
+    "type-check": "tsc --noEmit",
     "postinstall": "prisma generate",
     "start": "node dist/index.js",
     "setup": "npm install && prisma generate && prisma db push && tsx prisma/seed.ts",

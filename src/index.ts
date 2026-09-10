@@ -307,20 +307,28 @@ app.use(errorHandler);
 // ===================================
 const startServer = async () => {
   app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`📡 API available at http://localhost:${PORT}${API_PREFIX}`);
-    console.log(`📡 API Test URL at http://localhost:${PORT}/api/test`);
+    // Standalone server running
   });
 
   try {
     await connectWithRetry(5, 2000);
-    console.log('📦 Database initialization complete');
   } catch (err) {
-    console.error('⚠️ Database pre-connect failed, per-request retry is still active:', err instanceof Error ? err.message : err);
+    console.error(
+      "⚠️ Database pre-connect failed, per-request retry is still active:",
+      err instanceof Error ? err.message : err,
+    );
   }
 };
 
-startServer();
+// ✅ LSNODE COMPATIBILITY: Standalone dev එකේදී පමණක් listen කර, LiteSpeed යටතේ web socket එකට ඉඩ දීම
+if (!process.env.LSNODE && !process.env.PASSENGER_APP_ENV && require.main === module) {
+  startServer();
+} else {
+  // LiteSpeed lsnode යටතේ database retry එක කෙලින්ම ආරම්භ කිරීම
+  connectWithRetry(5, 2000).catch((err) => {
+    console.error("⚠️ lsnode DB pre-connect retry:", err instanceof Error ? err.message : err);
+  });
+}
 
 export default app;
+module.exports = app;
