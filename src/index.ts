@@ -24,12 +24,41 @@ for (const envPath of envPaths) {
   }
 }
 
+import cors from 'cors';
 import { errorHandler } from './middleware/errorHandler';
 import { notFound } from './middleware/notFound';
 import { apiRateLimiter } from './middleware/rateLimiter';
 import { sanitizeRequestBody } from './middleware/validation';
-import { connectWithRetry, isDbConnected, dbReady } from './lib/prisma';
+import { connectDB, prisma, isDbConnected } from './lib/prisma';
 import { renderStatusPage, renderRootPage } from './views/statusPage';
+
+let isShuttingDown = false;
+
+const shutdown = async (reason: string, exitCode: number) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`Shutting down (${reason})...`);
+
+  try {
+    await prisma.$disconnect();
+  } catch (error) {
+    console.error('Failed to disconnect Prisma:', error);
+    exitCode = 1;
+  } finally {
+    process.exit(exitCode);
+  }
+};
+
+process.once('SIGINT', () => { void shutdown('SIGINT', 0); });
+process.once('SIGTERM', () => { void shutdown('SIGTERM', 0); });
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+  void shutdown('unhandled promise rejection', 1);
+});
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error);
+  void shutdown('uncaught exception', 1);
+});
 
 // Route imports
 import authRoutes from './routes/auth.routes';
@@ -56,6 +85,15 @@ const isProduction = process.env.NODE_ENV === 'production';
 // ===================================
 app.set('trust proxy', 1);
 console.log(`🔒 Trust proxy set to 1 (${isProduction ? 'production' : 'development'})`);
+
+// [FIX] Origin Header Cleaning Middleware (Ultra Smart Shop standard)
+app.use((req, _res, next) => {
+  const origin = req.headers.origin;
+  if (origin && typeof origin === 'string' && origin.includes(',')) {
+    req.headers.origin = origin.split(',')[0].trim();
+  }
+  next();
+});
 
 // ===================================
 // SECURITY MIDDLEWARE - Order matters!
@@ -113,36 +151,37 @@ const setCrossOriginResourceHeaders = (_req: express.Request, res: express.Respo
 // 3. Cookie parser - Required for refresh token cookies
 app.use(cookieParser());
 
-// 4. CORS configuration - Custom CORS middleware
-function isOriginAllowed(origin: string | undefined): boolean {
-  if (!origin) return false;
-  if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
-  if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
-  if (/^https:\/\/ecotec\.ecosystemlk\.app\/?$/i.test(origin)) return true;
-  if (/^https:\/\/api\.ecotec\.ecosystemlk\.app\/?$/i.test(origin)) return true;
-  if (/\.ecosystemlk\.app$/i.test(origin)) return true;
-  return false;
-}
+// 4. CORS Configuration (Ultra Smart Shop validated standard)
+const allowedOrigins = [
+  'https://ecotec.ecosystemlk.app',
+  'https://api.ecotec.ecosystemlk.app',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  process.env.FRONTEND_URL || ''
+].filter(Boolean);
 
-function setHeaderClean(res: express.Response, name: string, value: string): void {
-  res.removeHeader(name);
-  res.setHeader(name, value);
-}
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  setHeaderClean(res, 'Vary', 'Origin');
-  setHeaderClean(res, 'Access-Control-Allow-Origin', (origin && isOriginAllowed(origin)) ? origin : 'https://ecotec.ecosystemlk.app');
-  setHeaderClean(res, 'Access-Control-Allow-Credentials', 'true');
-  setHeaderClean(res, 'Access-Control-Expose-Headers', 'Set-Cookie, X-Request-ID');
-  if (req.method === 'OPTIONS') {
-    setHeaderClean(res, 'Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    setHeaderClean(res, 'Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cache-Control, Pragma, Expires');
-    setHeaderClean(res, 'Access-Control-Max-Age', '86400');
-    return res.status(204).end();
-  }
-  next();
-});
+    const cleanOrigin = origin.replace(/\/+$/, '');
+    const isAllowed = allowedOrigins.some(item => cleanOrigin === item.replace(/\/+$/, '')) ||
+                      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(cleanOrigin) ||
+                      /\.ecosystemlk\.app$/i.test(cleanOrigin);
+
+    if (isAllowed) {
+      return callback(null, cleanOrigin);
+    }
+    return callback(null, 'https://ecotec.ecosystemlk.app');
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cookie', 'X-Request-ID'],
+  exposedHeaders: ['Set-Cookie', 'X-Request-ID'],
+  maxAge: 86400,
+}));
 
 // 5. Gzip Compression - Compresses responses > 1 KB
 app.use(compression({ threshold: 1024 }));
@@ -204,14 +243,9 @@ if (isProduction) {
   }
 }
 
-// Health check — MUST be instant. Render sends these every 5s from multiple IPs.
+// Health Check (Instant response without touching DB)
 app.get('/health', (_req, res) => {
-  const dbConnected = isDbConnected();
-  res.status(200).json({
-    status: dbConnected ? 'ok' : 'degraded',
-    timestamp: new Date().toISOString(),
-    database: dbConnected ? 'connected' : 'disconnected',
-  });
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // ===================================
@@ -237,30 +271,6 @@ app.get('/', (_req, res) => {
   res.status(200).send(renderRootPage(getStatusOptions()));
 });
 
-// ===================================
-// COLD-START GATE MIDDLEWARE
-// ===================================
-const DB_GATE_TIMEOUT_MS = 45000;
-
-app.use(`${API_PREFIX}`, async (req, res, next) => {
-  if (isDbConnected()) return next();
-
-  console.log(`⏳ Request waiting for DB: ${req.method} ${req.originalUrl}`);
-
-  const timeout = new Promise<'timeout'>((resolve) =>
-    setTimeout(() => resolve('timeout'), DB_GATE_TIMEOUT_MS)
-  );
-  const result = await Promise.race([dbReady, timeout]);
-
-  if (result === 'timeout' && !isDbConnected()) {
-    console.error(`🚫 DB gate timeout for ${req.method} ${req.originalUrl}`);
-    return res.status(503).json({
-      success: false,
-      message: 'Service is starting up. Please try again in a few seconds.',
-    });
-  }
-  next();
-});
 
 // ===================================
 // ROUTE-LEVEL TIMEOUT FOR HEAVY OPERATIONS
@@ -303,32 +313,25 @@ app.use(notFound);
 app.use(errorHandler);
 
 // ===================================
-// STARTUP SEQUENCE
+// STARTUP SEQUENCE (Ultra Smart Shop Pattern)
 // ===================================
 const startServer = async () => {
-  app.listen(PORT, () => {
-    // Standalone server running
-  });
-
   try {
-    await connectWithRetry(5, 2000);
-  } catch (err) {
-    console.error(
-      "⚠️ Database pre-connect failed, per-request retry is still active:",
-      err instanceof Error ? err.message : err,
-    );
+    await connectDB();
+    const server = app.listen(PORT, () => {
+      console.log(`🚀 API running on http://localhost:${PORT}`);
+    });
+
+    server.keepAliveTimeout = 65000;
+    server.headersTimeout = 66000;
+    server.requestTimeout = 0;
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    void shutdown('startup failure', 1);
   }
 };
 
-// ✅ LSNODE COMPATIBILITY: Standalone dev එකේදී පමණක් listen කර, LiteSpeed යටතේ web socket එකට ඉඩ දීම
-if (!process.env.LSNODE && !process.env.PASSENGER_APP_ENV && require.main === module) {
-  startServer();
-} else {
-  // LiteSpeed lsnode යටතේ database retry එක කෙලින්ම ආරම්භ කිරීම
-  connectWithRetry(5, 2000).catch((err) => {
-    console.error("⚠️ lsnode DB pre-connect retry:", err instanceof Error ? err.message : err);
-  });
-}
+startServer();
 
 export default app;
 module.exports = app;
