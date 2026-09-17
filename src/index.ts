@@ -243,9 +243,13 @@ if (isProduction) {
   }
 }
 
-// Health Check (Instant response without touching DB)
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// [FIX] Multi-Route Ultra-Fast Health Check (Bypasses DB, rate limiter & session state for instant proxy readiness)
+app.get(['/health', '/api/health', `${API_PREFIX}/health`], (_req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
 });
 
 // ===================================
@@ -322,9 +326,10 @@ const startServer = async () => {
       console.log(`🚀 API running on http://localhost:${PORT}`);
     });
 
+    // [FIX] Harden connection lifecycle timeouts against reverse-proxy hanging sockets
     server.keepAliveTimeout = 65000;
     server.headersTimeout = 66000;
-    server.requestTimeout = 0;
+    server.requestTimeout = 120000; // 2 minutes max per connection to prevent infinite worker hanging
   } catch (error) {
     console.error('Failed to start server:', error);
     void shutdown('startup failure', 1);

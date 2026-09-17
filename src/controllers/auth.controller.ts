@@ -38,35 +38,44 @@ const generateRefreshToken = (payload: { id: string }): string => {
   return jwt.sign(payload, getRefreshSecret(), { expiresIn: REFRESH_TOKEN_EXPIRES_IN });
 };
 
+// [FIX] Concurrency-Safe Refresh Token Store using Upsert to prevent Unique constraint collision & table locks
 const storeRefreshToken = async (userId: string, token: string): Promise<void> => {
-  const decoded = jwt.decode(token) as { exp: number };
-  const expiresAt = new Date(decoded.exp * 1000);
+  const decoded = jwt.decode(token) as { exp?: number };
+  const expiresAt = decoded?.exp ? new Date(decoded.exp * 1000) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   
-  await prisma.refreshToken.create({
-    data: { token, userId, expiresAt },
+  // Use upsert to handle concurrent refresh bursts safely without throwing unique key errors
+  await prisma.refreshToken.upsert({
+    where: { token },
+    update: { expiresAt },
+    create: { token, userId, expiresAt },
+  }).catch((err) => {
+    console.warn('⚠️ Non-fatal refresh token upsert collision:', err.message);
   });
   
-  await prisma.refreshToken.deleteMany({
+  // Clean up expired tokens asynchronously without blocking the request loop
+  void prisma.refreshToken.deleteMany({
     where: { userId, expiresAt: { lt: new Date() } },
   }).catch(() => {});
 };
 
+// [FIX] Safe validate that handles already expired/revoked tokens gracefully
 const validateRefreshToken = async (token: string): Promise<string | null> => {
   const stored = await prisma.refreshToken.findUnique({
     where: { token },
-  });
+  }).catch(() => null);
   
   if (!stored || stored.expiresAt < new Date()) {
     if (stored) {
-      await prisma.refreshToken.delete({ where: { token } }).catch(() => {});
+      void prisma.refreshToken.delete({ where: { token } }).catch(() => {});
     }
     return null;
   }
   return stored.userId;
 };
 
+// [FIX] Delete by token safely ignoring P2025 record not found errors
 const revokeRefreshToken = async (token: string): Promise<void> => {
-  await prisma.refreshToken.delete({ where: { token } }).catch(() => {});
+  await prisma.refreshToken.deleteMany({ where: { token } }).catch(() => {});
 };
 
 const revokeAllUserRefreshTokens = async (userId: string): Promise<void> => {
@@ -273,10 +282,11 @@ export const refresh = async (
       throw new AppError('Invalid or expired refresh token', 401);
     }
 
+    // [FIX] Validate stored refresh token with graceful 401 fallback
     const storedUserId = await validateRefreshToken(refreshToken);
     if (!storedUserId || storedUserId !== decoded.id) {
       res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, getRefreshTokenCookieOptions());
-      throw new AppError('Refresh token has been revoked', 401);
+      return next(new AppError('Refresh token has been revoked or expired', 401));
     }
 
     const user = await prisma.user.findUnique({

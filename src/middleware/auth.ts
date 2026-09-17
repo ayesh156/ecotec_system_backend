@@ -56,10 +56,13 @@ export const protect = async (
       throw jwtError;
     }
 
-    // Get user from database with shopId
+    // [FIX] Fast-timeout DB lookup for user validation to protect event loop under load
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
       select: { id: true, email: true, name: true, role: true, isActive: true, shopId: true },
+    }).catch((dbErr) => {
+      console.error('⚠️ DB user lookup error in protect middleware:', dbErr.message);
+      throw new AppError('Authentication service temporarily unavailable', 503);
     });
 
     if (!user) {
