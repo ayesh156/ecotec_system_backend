@@ -209,9 +209,15 @@ export const login = async (
       throw new AppError('Your account has been deactivated. Please contact support.', 401);
     }
 
+    // [FIX] Safe password comparison with non-returning response to satisfy void return type
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      throw new AppError('Invalid email or password', 401);
+      res.status(401).json({
+        success: false,
+        status: 'fail',
+        message: 'Invalid email or password',
+      });
+      return;
     }
 
     await prisma.user.update({

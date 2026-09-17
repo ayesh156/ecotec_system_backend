@@ -19,9 +19,10 @@ export type { AuthRequest };
  * - TOKEN_INVALID: Token is malformed or invalid
  * - USER_INACTIVE: User account is deactivated
  */
+// [FIX] Expose res object to allow instant response dispatch on token errors
 export const protect = async (
   req: AuthRequest,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ) => {
   try {
@@ -38,22 +39,33 @@ export const protect = async (
       throw error;
     }
 
-    // Verify token
+    // [FIX] Concurrency-safe token verification with immediate non-hanging 401 dispatch
     let decoded: { id: string; email: string; role: string; shopId: string | null };
     try {
       decoded = jwt.verify(token, getJwtSecret()) as typeof decoded;
     } catch (jwtError) {
       if (jwtError instanceof TokenExpiredError) {
-        const error = new AppError('Access token has expired', 401);
-        (error as AppError & { code: string }).code = 'TOKEN_EXPIRED';
-        throw error;
+        return res.status(401).json({
+          success: false,
+          status: 'fail',
+          code: 'TOKEN_EXPIRED',
+          message: 'Access token has expired',
+        });
       }
       if (jwtError instanceof JsonWebTokenError) {
-        const error = new AppError('Invalid access token', 401);
-        (error as AppError & { code: string }).code = 'TOKEN_INVALID';
-        throw error;
+        return res.status(401).json({
+          success: false,
+          status: 'fail',
+          code: 'TOKEN_INVALID',
+          message: 'Invalid access token',
+        });
       }
-      throw jwtError;
+      return res.status(401).json({
+        success: false,
+        status: 'fail',
+        code: 'TOKEN_ERROR',
+        message: 'Token verification failed',
+      });
     }
 
     // [FIX] Fast-timeout DB lookup for user validation to protect event loop under load
