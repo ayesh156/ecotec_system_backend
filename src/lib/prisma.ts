@@ -3,40 +3,31 @@ import { PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined };
 
-// ── Ultra Smart Variable-Based Connection URL Flow ──
-const rawUrl = process.env.DATABASE_URL || 'mysql://root:@localhost:3306/ecotec_db';
-const parsedUrl = new URL(rawUrl);
+const rawUrl = process.env.DATABASE_URL;
+if (!rawUrl) {
+  throw new Error('❌ Critical Architecture Error: DATABASE_URL is missing in environment variables.');
+}
 
-// URL එකෙන් variables වෙන් කර ගැනීම
-const dbUser = decodeURIComponent(parsedUrl.username);
-const dbPassword = decodeURIComponent(parsedUrl.password);
-const dbHost = parsedUrl.hostname;
-const dbPort = parsedUrl.port ? parseInt(parsedUrl.port, 10) : 3306;
-const dbName = parsedUrl.pathname.replace(/^\//, '');
-
-// Explicit Connection Pool Variables (VPS Stability එක සඳහා)
-const connectionLimit = 5;      // Pool එකට max connections 5යි
-const connectTimeout = 5000;    // 5s connection timeout
-const poolTimeout = 10;         // 10s pool wait timeout
-
-// Variables එකතු කර Dynamic Pooled Database URL එක හැදීම
-const authPart = dbPassword ? `${dbUser}:${encodeURIComponent(dbPassword)}@` : (dbUser ? `${dbUser}@` : '');
-const pooledDatabaseUrl = `mysql://${authPart}${dbHost}:${dbPort}/${dbName}?connection_limit=${connectionLimit}&connect_timeout=${connectTimeout / 1000}&pool_timeout=${poolTimeout}`;
+// අනාගත Load Balancing සහ Spikes වලට මුහුණ දීම සඳහා URL එක මඟින්ම Native Params සැකසීම
+const dbUrl = new URL(rawUrl);
+dbUrl.searchParams.set('connection_limit', '5'); // උපරිම connections 5යි
+dbUrl.searchParams.set('connect_timeout', '15'); // 15s handshake timeout
+dbUrl.searchParams.set('pool_timeout', '15');    // 15s pool checkout timeout
 
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
     datasources: {
       db: {
-        url: pooledDatabaseUrl,
+        url: dbUrl.toString(),
       },
     },
+    // Heavy load එකකදී performance බැලීමට warnings පමණක් log කිරීම
     log: process.env.NODE_ENV === 'development' ? ['query', 'warn', 'error'] : ['warn', 'error'],
   });
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
+// Worker processes recycle වීමේදී memory leaks වැළැක්වීම සඳහා අනිවාර්ය Singleton Cache කිරීම
+globalForPrisma.prisma = prisma;
 
 let isConnected = false;
 
@@ -44,16 +35,15 @@ export function isDbConnected(): boolean {
   return isConnected;
 }
 
-// Database connection check helper
+// Server crash වීම වළක්වන Graceful DB Connection Handler
 export async function connectDB() {
   try {
     await prisma.$connect();
     isConnected = true;
-    console.log(`✅ MariaDB Connected successfully (Host: ${dbHost}, Port: ${dbPort}, Max Pool: ${connectionLimit})`);
+    console.log(`✅ [${dbUrl.pathname.replace(/^\//, '')}] Prisma Native Engine connected successfully (Pool: 5, Timeout: 15s)`);
   } catch (error) {
     isConnected = false;
-    console.error('❌ Database connection failed:', error);
-    throw error;
+    console.error('❌ Database connection queue timeout or failure:', error);
   }
 }
 
